@@ -8,10 +8,10 @@ Note that this script should not be used on subtitles which are
 intentionally color coded such as SDH based color coding.
 
 Usage:
-  python sup_pf.py input.sup output.sup
-  python sup_pf.py input.sup output.sup --main-color yellow
-  python sup_pf.py input.sup output.sup --main-color blue
-  python sup_pf.py input.sup output.sup --main-color a7a792
+  python suppf.py input.sup output.sup
+  python suppf.py input.sup output.sup --main-color yellow
+  python suppf.py input.sup output.sup --main-color blue
+  python suppf.py input.sup output.sup --main-color a7a792
   append --quiet for no debug output
 """
 import sys
@@ -505,11 +505,11 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python sup_pf.py input.sup output.sup
-  python sup_pf.py input.sup output.sup --main-color yellow
-  python sup_pf.py input.sup output.sup --main-color blue  
-  python sup_pf.py input.sup output.sup --main-color #FF6600
-  python sup_pf.py input.sup output.sup --main-color --quiet
+  python suppf.py input.sup output.sup
+  python suppf.py input.sup output.sup --main-color yellow
+  python suppf.py input.sup output.sup --main-color blue  
+  python suppf.py input.sup output.sup --main-color FF6600
+  python suppf.py input.sup output.sup --main-color --quiet
 
 Supported color names: yellow, blue, cyan, green, red, orange, purple, pink, lime
 Or use hex format: RRGGBB (e.g., FF6600)
@@ -530,3 +530,4 @@ Or use hex format: RRGGBB (e.g., FF6600)
     
     verbose = not args.quiet
     process_file(args.input, args.output, args.main_color, verbose)
+
