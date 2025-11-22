@@ -9,7 +9,7 @@ This is a collection of 1-file python/batch scripts for making life easier when 
 ## suppf
 suppf is PGS subtitle palette fixer that corrects common subtitle color issues.
 
-Requirements: Python 3.9+
+Requirements: Python 3.6+
 
 Dependencies: None
 
@@ -49,7 +49,11 @@ check_idr will determine if a given frame in an h264 raw stream is an IDR frame 
 
 Requirements: Python 3.7+
 
-Dependencies: `pip install rich`
+Dependencies:
+
+`pip install rich`
+
+[ffmpeg](https://www.ffmpeg.org/download.html) must be installed and in your PATH.
 
 ### Usage
 A path to a raw h264 stream and a frame number are required arguments.
