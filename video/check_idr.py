@@ -1,4 +1,6 @@
 """
+@author squash
+
 Dependencies:
 pip install rich
 ffmpeg https://www.ffmpeg.org/download.html
@@ -138,4 +140,5 @@ def main():
     find_idr_frames(video_file, frame, verbose)
 
 if __name__ == "__main__":
+
     main()
