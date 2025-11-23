@@ -17,3 +17,27 @@ An input and an output path are required arguments.
 
 ### Example Output
 <img src="https://img.onlyimage.org/FtvQN6.png" width="425" height="300">
+<hr>
+
+<h2><a href="https://github.com/9Oc/Squash-P2P-Script-Emporium/blob/main/audio/compute_bit_depth.py">compute_bit_depth</a>
+<a href="https://www.python.org/downloads/release/python-380/"><img src="https://img.shields.io/badge/Python-3.08%2B-brightgreen" alt="Python 3.08+"></a></h2>
+
+`compute_bit_depth.py` plots the average bit-depth of a FLAC/WAV audio file.
+
+Dependencies:
+
+`pip install soundfile numpy matplotlib`
+<hr>
+
+### Usage
+A path to a FLAC/WAV audio file is the only required argument.
+
+`compute_bit_depth.py -i "path\to\audio.flac"`
+
+Optionally provide a float with `-w` to change the polling window. This value is in seconds and adjusts how frequently the audio file is polled for bit-depth. The default value is 0.5 seconds.
+
+`compute_bit_depth.py -i "path\to\audio.flac" -w 1.0`
+<hr>
+
+Example output:
+<img src="https://img.onlyimage.org/FC0B9Z.png">
