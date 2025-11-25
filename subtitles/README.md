@@ -88,8 +88,8 @@ The only required argument is a path to a folder containing the .srt files you w
 
 Optionally, provide a specific audio file to sync to. The audio file can be any codec.
 
-`syncsubs.py "path\to\subtitles" --audio "path\to\audio.flac`
+`syncsubs.py "path\to\subtitles" --audio "path\to\audio.flac"`
 
 By default, the script processes `N` number of subtitles concurrently where `N` is the number of threads your CPU has. To adjust how many subtitles are processed at once, provide a number of max workers. It may be beneficial to lower the number of max workers if you are syncing many subtitle files and do not have a high thread count CPU.
 
-`syncsubs.py "path\to\subtitles" --audio "path\to\audio.flac --max-workers 5`
+`syncsubs.py "path\to\subtitles" --audio "path\to\audio.flac" --max-workers 5`
