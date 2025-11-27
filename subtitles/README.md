@@ -119,7 +119,7 @@ Optionally, provide a specific audio file to sync to. The audio file can be any 
 
 By default, the script processes `N` number of subtitles concurrently where `N` is the number of threads your CPU has. To adjust how many subtitles are processed at once, provide a number of max workers. It may be beneficial to lower the number of max workers if you are syncing many subtitle files and do not have a high thread count CPU.
 
-`syncsubs.py "path\to\subtitles" --audio "path\to\audio.flac" --max-workers 5`
+`syncsups.py "path\to\subtitles" --audio "path\to\audio.flac" --max-workers 5`
 
 Optionally, provide the `--keep-temp` argument to keep the temporary dummy .srt files created which the script generates and uses to write the new timestamps and framerate to the synced .sup files. This argument can be omitted in a majority of cases and is only used for debugging purposes.
 
