@@ -19,6 +19,18 @@ An input and an output path are required arguments.
 <img src="https://img.onlyimage.org/FtvQN6.png" width="425" height="300">
 <hr>
 
+<h2><a href="https://github.com/9Oc/Squash-P2P-Script-Emporium/blob/main/audio/gen_spectrograms.bat">gen_spectrograms</a></h2>
+
+`gen_spectrograms.bat` generates spectrogram images for any `.flac` audio files in the given directory.
+
+Dependencies:
+
+<a href="https://github.com/chirlu/sox">SoX</a> must be in your PATH.
+<hr>
+
+### Usage
+Double click `gen_spectrograms.bat` and enter the directory containing the `.flac` files you want to generate spectrograms for. The script will recursively search through sub-folders inside the given directory so spectrograms will be generated for any `.flac` files immediately inside the given directory and any `.flac` files inside sub-folders of the given directory.
+
 <h2><a href="https://github.com/9Oc/Squash-P2P-Script-Emporium/blob/main/audio/compute_bit_depth.py">compute_bit_depth</a>
 <a href="https://www.python.org/downloads/release/python-380/"><img src="https://img.shields.io/badge/Python-3.08%2B-brightgreen" alt="Python 3.08+"></a></h2>
 
