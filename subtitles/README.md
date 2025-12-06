@@ -140,6 +140,7 @@ Add the script to your <a href="https://www.tampermonkey.net/">TamperMonkey</a> 
 <h2><a href="https://github.com/9Oc/Squash-P2P-Scriptorium/blob/main/subtitles/ejsubdl.js">ejsubdl</a></h2>
 
 `ejsubdl.js` is a subtitle downloader for <a href="https://jupiter.err.ee/">Err Jupiter</a>, an Estonian public broadcast streaming service.
+<hr>
 
 ### Usage
 Add the script to your <a href="https://www.tampermonkey.net/">TamperMonkey</a> dashboard and save it.
