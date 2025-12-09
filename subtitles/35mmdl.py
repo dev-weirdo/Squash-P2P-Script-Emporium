@@ -34,6 +34,7 @@ LANG_MAP = {
     "pol": "pl",
     "eng": "en-US",
     "qtp": "pl[sdh]",
+    "ukr": "uk",
 }
 
 console = Console(color_system="truecolor")
