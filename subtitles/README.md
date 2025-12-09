@@ -146,3 +146,28 @@ Add the script to your <a href="https://www.tampermonkey.net/">TamperMonkey</a> 
 Add the script to your <a href="https://www.tampermonkey.net/">TamperMonkey</a> dashboard and save it.
 
 Whenever you load a video on Err Jupiter, the script will automatically download any subtitles available.
+
+<h2><a href="https://github.com/9Oc/Squash-P2P-Scriptorium/blob/main/subtitles/35mmdl.py">35mmdl</a>
+<a href="https://www.python.org/downloads/release/python-3100/"><img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen" alt="Python 3.10+"></a></h2>
+
+`35mmdl.py` is a subtitle downloader for <a href="https://35mm.online">35mm.online</a>. It will download any available subtitles for a given 35mm VOD url. Thx to vevv for finding this streaming provider.
+
+Dependencies:
+
+`pip install requests rich git+https://github.com/vevv/subby.git`
+<hr>
+
+### Usage
+Before running the script, set your TMDB API key and output directory at the top of the script.
+```python
+TMDB_API_KEY = "YOUR_TMDB_API_KEY"  # <-- your TMDB API key
+OUTPUT_DIR = r"YOUR/OUTPUT/DIRECTORY"  # <-- your desired output directory
+```
+
+The only accepted argument is a 35mm VOD url.
+
+`35mmdl.py https://35mm.online/vod/fabula/klincz`
+
+Example output:
+
+<img src="https://img.onlyimage.org/FxPffK.png">
