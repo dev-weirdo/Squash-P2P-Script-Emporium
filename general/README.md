@@ -123,6 +123,8 @@ https://ptpimg.me/9k103c.png[/comparison]
 <h2><a href="https://github.com/9Oc/Squash-P2P-Scriptorium/blob/main/general/slowpic2hdb.js">slowpic2hdb</a></h2>
 
 `slowpic2hdb.js` adds an HDB Rehost button to slowpics comparison collections to re-host the images on HDB and output the comparison bbcode in the format that HDB accepts.
+
+Thx 2 xzin for the original script.
 <hr>
 
 ### Usage
