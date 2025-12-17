@@ -102,25 +102,29 @@ You can apply any combination of the clip parameters below to each clip.
    Note that resizing will happen before cropping.
 
 7. **Cropping**  
-   Crops the clip by a tuple of 4 ints. Example:  
-   `(10, 0, 22, 22)`
+   Crops the clip by a the specified values (left, right, top, bottom). Example:  
+   `Crop(10, 0, 22, 22)`
 
-8. **Luma**  
+8. **Add Borders**  
+   Adds black borders to the clip with the specified values (left, right, top, bottom). Example:  
+   `AddBorders(10, 0, 22, 22)`
+
+9. **Luma**  
    Outputs a duplicate of the clip with the luminance values adjusted to correct gamma-bugged sources.  
    Accepted value: `Luma`
 
-9. **Tonemapping**  
+10. **Tonemapping**  
    Applies tonemapping to HDR/Dolby Vision sources so they can be viewed on SDR screens.  
    Accepted values:  
    - `HDR`: Tonemaps an HDR10 source to SDR.  
    - `DOVI`: Tonemaps a Dolby Vision source to SDR using DV metadata.
 
-10. **Baking FEL**  
+11. **Baking FEL**  
    Outputs a duplicate of the clip with the Dolby Vision EL baked into the source.  
    Example:  
    `BakeEL(r"path/to/EL.mkv")`
 
-11. **NoFPS**  
+12. **NoFPS**  
     By default, the script normalizes all clips to the same FPS value defined by `fpsnum` and `fpsden`.  
     To skip FPS normalization for a specific clip, use: `NoFPS`
 
