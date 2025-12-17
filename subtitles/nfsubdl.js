@@ -2,7 +2,7 @@
 // @name        Netflix Subtitle Downloader (Squash Mod)
 // @description Allows you to download subtitles from Netflix, modified for 1-click all subs download
 // @license     MIT
-// @version     1.3
+// @version     1.4
 // @namespace   nfsubdl-squash-mod
 // @include     https://www.netflix.com/*
 // @grant       unsafeWindow
@@ -790,7 +790,7 @@ const downloadAllSubsSequential = async () => {
 
     console.log(`Found ${allItems.length} subtitles to load`);
     // create progress bar
-    const progress = new ProgressBar(allItems.length - 1);
+    const progress = new ProgressBar(allItems.length);
     // get movie year
     let year = getReleaseYear();
 
