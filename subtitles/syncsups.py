@@ -231,7 +231,7 @@ def parse_framerate_factor(log: str) -> float | None:
     # parse the framerate factor from the ffsubsync log
     m = re.search(r"framerate scale factor:\s*([0-9.]+)", log)
     if m:
-        return factor
+        return float(m.group(1))
     return None
 
 
@@ -518,13 +518,12 @@ def process_sup(mkv_file: Path, sup_in: Path, dirs):
     
     if len(synced_events) != len(events):
         synced_events = synced_events[:min(len(synced_events), len(events))]
-    new_fps_val = BDVideo.to_pcsfps(sup.get_fps())
+    new_fps_val = float(sup.get_fps())
     try:
         if factor is not None and factor != 1.0:
-            current_fps_val = float(sup.get_fps().value)
-            new_fps_val = current_fps_val / factor
+            new_fps_val = new_fps_val / factor
             closest_fps = map_to_nearest_fps(new_fps_val, BDVideo._LUT_PCS_FPS)
-            new_fps_val = BDVideo._LUT_PCS_FPS[closest_fps]
+            new_fps_val = closest_fps
         write_synced_sup(sup, sup_out, synced_events, new_fps_val)
     except Exception as e:
         return f"FAILED (write_sup): {sup_in.name}\n{e}"
