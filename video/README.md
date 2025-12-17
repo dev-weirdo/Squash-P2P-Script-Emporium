@@ -72,6 +72,19 @@ Any empty clip templates that are leftover will be skipped automatically by the 
 
 You can apply any combination of the clip parameters below to each clip.
 
+The order of operations for the clip parameters is:
+
+1. Decimate telecined duplicate frames if applicaple
+2. Bake EL if provided
+3. Normalize FPS
+4. Trim frames
+5. Pad frames
+6. Resize
+7. Cropping
+8. AddBorders
+9. Tonemapping if applicaple
+10. Luma adjustment if applicable
+
 ---
 
 ### Clip Parameters
