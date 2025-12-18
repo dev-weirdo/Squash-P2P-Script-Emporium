@@ -410,6 +410,8 @@ for entry in clips_config:
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
         if clip_el_baked:
+            if (needs_resampling):
+                clip_el_baked = clip_el_baked.resize.Bicubic(format=vs.YUV444P16)
             clip_el_baked = clip_el_baked.resize.Spline36(resize.width, resize.height, dither_type="error_diffusion")
 
     # Crop
@@ -425,16 +427,21 @@ for entry in clips_config:
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
         if clip_el_baked:
+            if (needs_resampling):
+                clip_el_baked = clip_el_baked.resize.Bicubic(format=vs.YUV444P16)
             clip_el_baked = core.std.CropRel(clip_el_baked, l, r, t, b)
     
     # Add Borders
     if borders:
-        if any(v % 2 for v in (borders.left, borders.right, borders.top, borders.bottom)):
+        needs_resampling = any(v % 2 for v in (borders.left, borders.right, borders.top, borders.bottom))
+        if (needs_resampling):
             clip = clip.resize.Bicubic(format=vs.YUV444P16)
         clip = core.std.AddBorders(clip, borders.left, borders.right, borders.top, borders.bottom)
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
         if clip_el_baked:
+            if (needs_resampling):
+                clip_el_baked = clip_el_baked.resize.Bicubic(format=vs.YUV444P16)
             clip_el_baked = core.std.AddBorders(clip_el_baked, borders.left, borders.right, borders.top, borders.bottom)
 
     # Tonemap if HDR or DOVI marker
