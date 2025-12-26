@@ -2,7 +2,7 @@
 // @name        Netflix Subtitle Downloader (Squash Mod)
 // @description Allows you to download subtitles from Netflix, modified for 1-click all subs download
 // @license     MIT
-// @version     1.4
+// @version     1.5
 // @namespace   nfsubdl-squash-mod
 // @include     https://www.netflix.com/*
 // @grant       unsafeWindow
@@ -47,6 +47,10 @@ class ProgressBar {
 
     updateLabel(text) {
         this.progressElement.innerHTML = text;
+    }
+
+    updateMax(max) {
+        this.max = max
     }
 
     increment() {
@@ -449,7 +453,7 @@ const getTitleFromCache = () => {
 };
 
 const pickFormat = formats => {
-    const preferred = (subFormat === DFXP ? ALL_FORMATS : ALL_FORMATS_prefer_vtt);
+    const preferred = (subFormat === DFXP ? ALL_FORMATS : ALL_FORMATS);
 
     for(let format of preferred) {
         if(typeof formats[format] !== 'undefined')
@@ -611,6 +615,27 @@ const downloadToEnd = () => {
     downloadBatch();
 };
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitUntil(condition, timeoutMs, intervalMs = 5) {
+    const start = Date.now();
+
+    while (true) {
+        const value = await condition();
+        if (value) {
+            return value;
+        }
+
+        if (Date.now() - start >= timeoutMs) {
+            return null;
+        }
+
+        await sleep(intervalMs);
+    }
+}
+
 function getReleaseYear() {
     const state = netflix?.appContext?.state?.playerApp?.getState();
     const videoMetadata = state?.videoPlayer?.videoMetadata;
@@ -626,11 +651,17 @@ function getReleaseYear() {
     return year;
 }
 
-function waitForSubtitleRequest() {
-    return new Promise(resolve => {
-        function handler(e) {
+function waitForSubtitleRequestOnce(timeoutMs = 4000) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
             window.removeEventListener('netflix_sub_downloader_xhr_complete', handler);
-            resolve(e.detail);
+            reject(new Error('subtitle xhr timeout'));
+        }, timeoutMs);
+
+        function handler(e) {
+            clearTimeout(timer);
+            window.removeEventListener('netflix_sub_downloader_xhr_complete', handler);
+            resolve(e.detail?.url || e.detail);
         }
         window.addEventListener('netflix_sub_downloader_xhr_complete', handler);
     });
@@ -643,6 +674,10 @@ function waitForSubtitleRequest() {
     },true);
 });
 
+const subtitleUrlQueue = [];
+const subtitleUrlSeen = new Set();
+const subtitleUrlWaiters = [];
+
 const CONTROL_BAR_SELECTOR = '.watch-video--bottom-controls-container';
 const BUTTON_SELECTOR = '[data-uia="control-audio-subtitle"]';
 const MENU_SELECTOR = '[data-uia="selector-audio-subtitle"]';
@@ -652,14 +687,19 @@ const SUBTITLE_ITEM_SELECTOR = 'li[data-uia^="subtitle-item-"]';
 const LANG_MAP = {
     "fr": "fr-FR",
     "fr[sdh]": "fr-FR[sdh]",
+    "fr[forced]": "fr-FR[forced]",
     "en": "en-US",
     "en[sdh]": "en-US[sdh]",
+    "en[forced]": "en-US[forced]",
     "pt": "pt-PT",
     "pt[sdh]": "pt-PT[sdh]",
+    "pt[forced]": "pt-PT[forced]",
     "es": "es-419",
     "es[sdh]": "es-419[sdh]",
+    "es[forced]": "es-419[forced]",
     "nb": "no",
-    "nb[sdh]": "no[sdh]"
+    "nb[sdh]": "no[sdh]",
+    "nb[forced]": "no[forced]"
 };
 
 async function cleanAndRenameZipFiles(zip, langMap) {
@@ -676,20 +716,24 @@ async function cleanAndRenameZipFiles(zip, langMap) {
         const nameWithoutExt = oldName.slice(0, lastDot);
         const ext = oldName.slice(lastDot + 1);
 
-        // Extract language tag (after last dot in nameWithoutExt)
+        // extract language tag (after last dot in nameWithoutExt)
         const secondLastDot = nameWithoutExt.lastIndexOf(".");
         if (secondLastDot === -1) continue;
 
         let base = nameWithoutExt.slice(0, secondLastDot);
         let langTag = nameWithoutExt.slice(secondLastDot + 1);
 
-        // Remove underscores from base
-        base = base.replace(/_/g, "");
+        langTag = langTag.replace("-x-rsf", "");
 
-        // Only rename lang tag if it exists in the map
+        // remove underscores from base
+        base = base.replace(/_/g, "");
+        langTag = langTag.replace("-forced", "[forced]");
+
+        // only rename lang tag if it exists in the map
         if (langMap.hasOwnProperty(langTag)) {
             langTag = langMap[langTag];
         }
+
 
         const newName = `${base}.${langTag}.${ext}`;
         const fileData = zip.file(oldName);
@@ -746,16 +790,163 @@ async function keepMenuOpen() {
     } else if (btn && !menu) {
         // Open menu if not open
         btn.click();
-        waitForSubtitleMenu()
+        await waitForSubtitleMenu();
     }
 }
 
-async function waitForSubtitleMenu() {
-    let items = [];
-    for (let i = 0; i < 40; i++) {
-        items = document.querySelectorAll(SUBTITLE_ITEM_SELECTOR);
-        if (items.length > 0) return;
-        await asyncSleep(0.05);
+async function waitForSubtitleMenu(timeout = 4000) {
+    return await waitUntil(() => {
+        let nodes = document.querySelectorAll(SUBTITLE_ITEM_SELECTOR);
+        return nodes.length > 0 ? nodes : null;
+    }, timeout);
+}
+
+function parseLangAndSDHFromSubtitle(text) {
+    // TTML / IMSC lang
+    let m = text.match(/xml:lang="([^"]+)"/i);
+    const lang = m ? m[1].trim() : null;
+
+    // parse SDH
+    const isSDH = /textType="CC"/i.test(text);
+
+    // WebVTT header fallback
+    if (!lang) {
+        m = text.match(/^Language:\s*([^\r\n]+)/mi);
+    }
+
+    return {
+        lang: (lang || (m ? m[1].trim() : 'und')),
+        sdh: isSDH
+    };
+}
+
+function ensureUniqueFilename(zip, base, ext) {
+    let name = `${base}.${ext}`;
+    let counter = 2;
+    while (zip.file(name)) {
+        name = `${base}_${counter}.${ext}`;
+        counter++;
+    }
+    return name;
+}
+
+async function runWithConcurrencyLimit(limit, tasks) {
+    const results = [];
+    let idx = 0;
+
+    const worker = async () => {
+        while (idx < tasks.length) {
+            const myIdx = idx++;
+            results[myIdx] = await tasks[myIdx]();
+        }
+    };
+
+    const workers = Array(Math.min(limit, tasks.length))
+    .fill(0)
+    .map(() => worker());
+    await Promise.all(workers);
+    return results;
+}
+
+function pushSubtitleUrl(url) {
+    if (typeof url !== 'string') return;
+    if (subtitleUrlSeen.has(url)) return;
+    subtitleUrlSeen.add(url);
+
+    if (subtitleUrlWaiters.length) {
+        const resolver = subtitleUrlWaiters.shift();
+        resolver(url);
+    } else {
+        subtitleUrlQueue.push(url);
+    }
+}
+
+// consume one URL, or wait up to timeoutMs if queue is empty
+function takeSubtitleUrl(timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+        if (subtitleUrlQueue.length) {
+            return resolve(subtitleUrlQueue.shift());
+        }
+        const timer = setTimeout(() => {
+            const idx = subtitleUrlWaiters.indexOf(resolver);
+            if (idx >= 0) subtitleUrlWaiters.splice(idx, 1);
+            reject(new Error('subtitle xhr timeout'));
+        }, timeoutMs);
+
+        const resolver = (url) => {
+            clearTimeout(timer);
+            resolve(url);
+        };
+        subtitleUrlWaiters.push(resolver);
+    });
+}
+
+// fetch subtitle text as soon as we capture a URL to prevent a url from expiring
+const subtitlePrefetchCache = new Map(); // url -> { text, lang, sdh }
+const subtitlePrefetchInFlight = new Map(); // url -> promise
+
+async function prefetchSubtitleUrl(url) {
+    if (typeof url !== 'string') return;
+    if (subtitlePrefetchCache.has(url) || subtitlePrefetchInFlight.has(url)) return;
+
+    const p = (async () => {
+        try {
+            const res = await fetch(url, { mode: "cors" });
+            if (!res || !res.ok) throw new Error(res ? res.status : "no response");
+            const text = await res.text();
+            if (!text) return;
+            const parsed = parseLangAndSDHFromSubtitle(text);
+            subtitlePrefetchCache.set(url, { text, lang: parsed.lang, sdh: parsed.sdh });
+        } catch (e) {
+            console.warn("Prefetch failed for subtitle URL", url, e);
+        } finally {
+            subtitlePrefetchInFlight.delete(url);
+        }
+    })();
+
+    subtitlePrefetchInFlight.set(url, p);
+    return p;
+}
+
+const isWatchPage = () => location.pathname.startsWith('/watch/');
+
+// capture XHR request urls
+window.addEventListener('netflix_sub_downloader_xhr_complete', (e) => {
+    if (!isWatchPage()) return; // ignore captures when browsing
+    const url = e.detail?.url || e.detail;
+    pushSubtitleUrl(url);
+    prefetchSubtitleUrl(url);
+}, true);
+
+// reset queues/caches on navigation away from watch pages
+window.addEventListener('popstate', () => {
+    if (!isWatchPage()) {
+        subtitleUrlQueue.length = 0;
+        subtitleUrlSeen.clear();
+        subtitlePrefetchCache.clear();
+        subtitlePrefetchInFlight.clear();
+    }
+});
+
+// Helper near your other helpers
+function isVideoReady() {
+    const videoEl = document.querySelector('video');
+    if (!videoEl) return false;
+    if (videoEl.readyState < 2) return false; // have current data
+
+    const state = netflix?.appContext?.state?.playerApp?.getState?.();
+    const meta = state?.videoPlayer?.videoMetadata;
+    const videoId = meta ? Object.keys(meta)[0] : null;
+    if (!videoId) return false;
+
+    const hasMeta = !!meta[videoId]?._metadataObject?.video;
+    return hasMeta;
+}
+
+function pauseVideoIfPlaying() {
+    const videoEl = document.querySelector('video');
+    if (videoEl && !videoEl.paused) {
+        videoEl.pause();
     }
 }
 
@@ -764,98 +955,161 @@ promise.then((value) => ({ tag, value }))
 .catch((err) => ({ tag, error: err }));
 
 const downloadAllSubsSequential = async () => {
-    //get movie/series title
+    if (!isVideoReady()) {
+        alert("Video not fully loaded yet. Please wait and try again.");
+        return;
+    }
+    pauseVideoIfPlaying();
     const [title, seriesTitle] = getTitleFromCache();
     const _zip = new JSZip();
     const intervalId = setInterval(keepMenuOpen, 2);
-
-    // Wait for items to appear
-    let items = [];
-    for (let i = 0; i < 20; i++) {
-        items = document.querySelectorAll(SUBTITLE_ITEM_SELECTOR);
-        if (items.length > 0) break;
-        await asyncSleep(0.1);
-    }
-    if (items.length === 0) {
+    const year = getReleaseYear() || 'UNKNOWN';
+    const progress = new ProgressBar(1);
+    progress.updateLabel("Waiting for subtitle menu to load...")
+    let items = await waitForSubtitleMenu(8000);
+    if (items == null) {
         alert("No subtitle items found in menu");
         clearInterval(intervalId);
+        progress.destroy();
         return;
     }
+    progress.updateLabel("Fetching forced subtitles...")
+    let subs = getSubsFromCache(true);
 
-    // Find the separator div and separate regional from non-regional subs
-    let allItems = Array.from(items);
-    allItems = allItems.filter(item =>
-                               item.textContent.trim().toLowerCase() !== "off"
-                              );
+    // retreive any forced subtitles in the cache
+    let allLangs = Object.keys(subs).filter(lang =>
+                                            (/forced/i.test(lang))
+                                           );
 
-    console.log(`Found ${allItems.length} subtitles to load`);
-    // create progress bar
-    const progress = new ProgressBar(allItems.length);
-    // get movie year
-    let year = getReleaseYear();
-
-    // Click and download all non-loaded subtitles
-    let i = 0;
-    for (const item of allItems) {
-        waitForSubtitleMenu()
-        item.click();
-        const races = [
-            tagged(waitForSubtitleRequest(), 'subtitle'),
-            tagged(progress.stop, 'progressStop')
-        ];
-        if (item === allItems[0]) {
-            races.push(tagged(asyncSleep(0.5), 'sleep'));
-        } else {
-            races.push(tagged(asyncSleep(4), 'sleep_long'));
+    for (const lang of allLangs) {
+        // skip if already downloaded
+        if (_zip.file(`${title}.${year}.NF.WEB.${lang}.ttml`)) {
+            continue;
         }
-        const stopOrDone = await Promise.race(races);
 
-        if (stopOrDone === STOP_THE_DOWNLOAD) {
+        const [urls, extension] = pickFormat(subs[lang]);
+        for (const url of urls) {
+            try {
+                const result = await fetch(url, {mode: "cors"});
+                const data = await result.text();
+                if (data.length > 0) {
+                    _zip.file(`${title}.${year}.NF.WEB.${lang}.ttml`, data);
+                    break;
+                }
+            } catch (e) {
+                console.error("Failed to fetch subtitle", lang, e);
+            }
+        }
+    }
+
+    let allItems = Array.from(items).filter(
+        item => item.textContent.trim().toLowerCase() !== "off"
+    );
+
+    progress.updateMax(allItems.length)
+    console.log(`Found ${allItems.length} subtitles to load`);
+
+    const urlSet = new Set();
+    let stopRequested = false;
+
+    // capture subtitle URLs
+    for (let i = 0; i < allItems.length; i++) {
+        progress.updateLabel(`Downloading subtitle ${i+1}/${allItems.length}`)
+        const item = allItems[i];
+        await waitForSubtitleMenu(2000);
+        item.click();
+
+        const races = [
+            tagged(takeSubtitleUrl(10000), 'url'),
+            tagged(progress.stop, 'stop'),
+            tagged(asyncSleep(i === 0 ? 0.2 : 10), 'sleep')
+        ];
+
+        let result;
+        try {
+            result = await Promise.race(races);
+        } catch (e) {
+            result = { tag: 'error', error: e };
+        }
+
+        if (result?.value === STOP_THE_DOWNLOAD) {
+            stopRequested = true;
             console.log("User requested stop. Saving current ZIP…");
             break;
         }
-        if (stopOrDone.tag === 'sleep') {
-            continue;
-        }
-        let newSubs = getSubsFromCache(true);
 
-        if (!newSubs) {
-            console.warn('Timeout waiting for subtitle to load:', item.textContent.trim());
-            progress.increment();
-            continue;
+        if (result?.tag === 'url' && typeof result.value === 'string') {
+            urlSet.add(result.value);
+        } else {
+            console.warn('No URL captured for item:', item.textContent.trim());
         }
 
-        // Download all languages in the current cache (including the newly loaded one)
-        let allLangs = Object.keys(newSubs).filter(lang =>
-                                                   !(/forced|stripped|dubtitle/i.test(lang))
-                                                  );
-
-        for (const lang of allLangs) {
-            progress.updateLabel(`Downloading subtitle ${i+1}/${allItems.length}`);
-            // Skip if already downloaded
-            if (_zip.file(`${title}.${year}.NF.WEB.${lang}.${EXTENSIONS[WEBVTT]}`)) {
-                continue;
-            }
-
-            const [urls, extension] = pickFormat(newSubs[lang]);
-            for (const url of urls) {
-                try {
-                    const result = await fetch(url, {mode: "cors"});
-                    const data = await result.text();
-                    if (data.length > 0) {
-                        _zip.file(`${title}.${year}.NF.WEB.${lang}.${extension}`, data);
-                        break;
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch subtitle", lang, e);
-                }
-            }
-        }
-        i++;
         progress.increment();
-        subtitleRequestCompleted = false;
     }
+
     clearInterval(intervalId);
+
+    const urls = Array.from(urlSet);
+    if (stopRequested || urls.length === 0) {
+        progress.updateLabel(`Cleaning up subtitle filenames...`);
+        await cleanAndRenameZipFiles(_zip, LANG_MAP);
+        progress.updateLabel(`Saving zip...`);
+        _save(_zip, seriesTitle.replace("_", ""));
+        progress.destroy();
+        return;
+    }
+
+    // download the subs
+    progress.current = 0;
+    progress.max = urls.length;
+    progress.updateLabel(`Downloading ${urls.length} subtitle files…`);
+
+    const downloadTasks = urls.map(url => async () => {
+        if (stopRequested) return;
+
+        try {
+            let cached = subtitlePrefetchCache.get(url);
+            let text = cached?.text;
+            let lang = cached?.lang;
+            let sdh = cached?.sdh;
+
+            if (!text) {
+                const responseOrStop = await Promise.race([
+                    fetch(url, { mode: "cors" }),
+                    progress.stop
+                ]);
+
+                if (responseOrStop === STOP_THE_DOWNLOAD) {
+                    stopRequested = true;
+                    return;
+                }
+
+                const res = responseOrStop;
+                if (!res || !res.ok) throw new Error(res ? res.status : 'no response');
+                text = await res.text();
+                if (!text || !text.length) return;
+
+                const parsed = parseLangAndSDHFromSubtitle(text);
+                lang = parsed.lang;
+                sdh = parsed.sdh;
+                // cache it for any later reuse
+                subtitlePrefetchCache.set(url, { text, lang, sdh });
+            }
+
+            const langTag = sdh ? `${lang}[sdh]` : lang;
+            const ext = 'ttml'; // nf subs from XHR are in TTML format
+            const base = `${title}.${year}.NF.WEB.${langTag}`;
+            const filename = ensureUniqueFilename(_zip, base, ext);
+            _zip.file(filename, text);
+        } catch (e) {
+            console.error('Failed to fetch subtitle', url, e);
+        } finally {
+            progress.increment();
+        }
+    });
+
+    await runWithConcurrencyLimit(50, downloadTasks);
+
     progress.updateLabel(`Cleaning up subtitle filenames...`);
     await cleanAndRenameZipFiles(_zip, LANG_MAP);
     progress.updateLabel(`Saving zip...`);
