@@ -2,7 +2,7 @@
 // @name        Netflix Subtitle Downloader (Squash Mod)
 // @description Allows you to download subtitles from Netflix, modified for 1-click all subs download
 // @license     MIT
-// @version     1.5
+// @version     1.6
 // @namespace   nfsubdl-squash-mod
 // @include     https://www.netflix.com/*
 // @grant       unsafeWindow
@@ -72,7 +72,7 @@ const WEBVTT = 'webvtt-lssdh-ios8';
 const DFXP = 'dfxp-ls-sdh';
 const SIMPLE = 'simplesdh';
 const IMSC1_1 = 'imsc1.1';
-const ALL_FORMATS = [IMSC1_1, DFXP, WEBVTT, SIMPLE];
+const ALL_FORMATS = [IMSC1_1, WEBVTT, DFXP, SIMPLE];
 const ALL_FORMATS_prefer_vtt = [WEBVTT, IMSC1_1, DFXP, SIMPLE];
 
 const FORMAT_NAMES = {};
@@ -830,8 +830,19 @@ function ensureUniqueFilename(zip, base, ext) {
     return name;
 }
 
-async function runWithConcurrencyLimit(limit, tasks) {
+async function runWithConcurrencyLimit(limit=Infinity, tasks, sequential=false, delayMs=0) {
     const results = [];
+
+    if (sequential) {
+        for (let i = 0; i < tasks.length; i++) {
+            if (i > 0 && delayMs > 0) {
+                await sleep(delayMs);
+            }
+            results[i] = await tasks[i]();
+        }
+        return results;
+    }
+
     let idx = 0;
 
     const worker = async () => {
@@ -841,9 +852,7 @@ async function runWithConcurrencyLimit(limit, tasks) {
         }
     };
 
-    const workers = Array(Math.min(limit, tasks.length))
-    .fill(0)
-    .map(() => worker());
+    const workers = Array(Math.min(limit, tasks.length)).fill(0).map(() => worker());
     await Promise.all(workers);
     return results;
 }
@@ -1020,9 +1029,9 @@ const downloadAllSubsSequential = async () => {
         item.click();
 
         const races = [
-            tagged(takeSubtitleUrl(10000), 'url'),
+            tagged(takeSubtitleUrl(12000), 'url'),
             tagged(progress.stop, 'stop'),
-            tagged(asyncSleep(i === 0 ? 0.5 : 10), 'sleep')
+            tagged(asyncSleep(i === 0 ? 0.2 : 10), 'sleep')
         ];
 
         let result;
@@ -1045,6 +1054,10 @@ const downloadAllSubsSequential = async () => {
         }
 
         progress.increment();
+        if (batchDelay > 0) {
+            progress.updateLabel(`Sleeping for ${batchDelay} seconds...`);
+            await sleep(batchDelay * 1000);
+        }
     }
 
     clearInterval(intervalId);
@@ -1108,7 +1121,16 @@ const downloadAllSubsSequential = async () => {
         }
     });
 
-    await runWithConcurrencyLimit(50, downloadTasks);
+    let concurrencyLimit = Infinity;
+    let sequential = false;
+    let delay = 0;
+
+    if (batchDelay > 0) {
+        sequential = true;
+        delay = batchDelay;
+    }
+
+    await runWithConcurrencyLimit(concurrencyLimit, downloadTasks, sequential, delay);
 
     progress.updateLabel(`Cleaning up subtitle filenames...`);
     await cleanAndRenameZipFiles(_zip, LANG_MAP);
