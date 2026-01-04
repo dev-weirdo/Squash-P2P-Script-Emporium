@@ -131,7 +131,7 @@ Optionally, provide the `--keep-temp` argument to keep the temporary dummy .srt 
 
 The mod adds the following functions to the script:
 <ul><li>An additional button to the download menu which downloads <i>all</i> subtitles which are selectable, even those which are not available on the region you are downloading from.</li>
-<li>When using the above button to download, the downloaded WebVTT files will have their file names cleaned to remove unecessary characters, release year added, and language tags fixed.</li></ul>
+<li>When using the above button to download, the downloaded subtitle files will have their file names cleaned to remove unecessary characters, release year added, and language tags fixed.</li></ul>
 <hr>
 
 ### Usage
@@ -171,3 +171,12 @@ The only accepted argument is a 35mm VOD url.
 Example output:
 
 <img src="https://img.onlyimage.org/FxPffK.png">
+
+<h2><a href="https://github.com/9Oc/Squash-P2P-Scriptorium/blob/main/subtitles/hmaxsubdl.js">hmaxsubdl</a></h2>
+
+`hmaxsubdl.js` is a subtitle downloader for <a href="https://play.hbomax.com/">HBO Max</a>.
+
+A download button will become visible when you load a watch page for any title on HBO Max.
+
+### Usage
+Add the script to your <a href="https://www.tampermonkey.net/">TamperMonkey</a> dashboard and save it. Then, load any watch page on HBO Max and press the download button.
