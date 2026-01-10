@@ -8,6 +8,6 @@ The links below lead to the collection of scripts for each category along with a
 - [Audio Scripts](https://github.com/9Oc/Squash-P2P-Script-Emporium/tree/main/audio)
 - [Video Scripts](https://github.com/9Oc/Squash-P2P-Script-Emporium/tree/main/video)
 
-## Standalone Instllable Python Projects
+## Standalone Installable Python Projects
 - [itsubdl](https://github.com/9Oc/itsubdl): iTunes subtitle downloader.
 - [tmdbwrapper](https://github.com/9Oc/tmdbwrapper): Wrapper for the TMDB API to get streaming provider URLs.
