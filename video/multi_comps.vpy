@@ -3,13 +3,14 @@ from vstools import vs, core, set_output
 from awsmfunc import FrameInfo, fixlvls, MapDolbyVision
 from awsmfunc.types.placebo import PlaceboColorSpace as ColorSpace
 from awsmfunc.types.placebo import PlaceboTonemapFunction as Tonemap
-from awsmfunc.types.placebo import PlaceboGamutMode as Gamut
+from awsmfunc.types.placebo import PlaceboGamutMapping as Gamut
+from awsmfunc.types.placebo import PlaceboHdrMetadataType as HdrMetaType
 from pathlib import Path
 
 # vspreview comparison script.
 # Author: squash
-# Date: 18/12/2025
-# Version: 2.02
+# Date: 07/1/2026
+# Version: 2.03
 
 # Marker objects | DO NOT EDIT
 class _LumaMarker:
@@ -18,6 +19,9 @@ class _LumaMarker:
 class _HDRMarker:
     def __str__(self):
         return "HDR10"
+class _HDR10PlusMarker:
+    def __str__(self):
+        return "HDR10+"
 class _DOVIMarker:
     def __str__(self):
         return "DOVI"
@@ -70,6 +74,7 @@ class _BakeELMarker:
 
 Luma = _LumaMarker()
 HDR = _HDRMarker()
+HDR10Plus = _HDR10PlusMarker()
 DOVI = _DOVIMarker()
 NoFPS = _FPSMarker()
 def Resize(width, height):
@@ -147,8 +152,18 @@ vsplacebo_hdr = {
     "src_csp": ColorSpace.HDR10,
     "dst_csp": ColorSpace.SDR,
     "dynamic_peak_detection": False,
-    "gamut_mapping": Gamut.Clip,
+    "gamut_mapping": Gamut.Perceptual,
+    "tone_mapping_function": Tonemap.Mobius,
+    "use_dovi": False,
+    "contrast_recovery": 0.0,
+}
+vsplacebo_hdr10p = {
+    "src_csp": ColorSpace.HDR10,
+    "dst_csp": ColorSpace.SDR,
+    "dynamic_peak_detection": False,
+    "gamut_mapping": Gamut.Perceptual,
     "tone_mapping_function": Tonemap.ST2094_40,
+    "hdr_metadata_type": HdrMetaType.HDR10Plus,
     "use_dovi": False,
     "contrast_recovery": 0.0,
 }
@@ -156,8 +171,8 @@ vsplacebo_dovi = {
     "src_csp": ColorSpace.DOVI,
     "dst_csp": ColorSpace.SDR,
     "dynamic_peak_detection": False,
-    "gamut_mapping": Gamut.Clip,
-    "tone_mapping_function": Tonemap.ST2094_10,
+    "gamut_mapping": Gamut.Perceptual,
+    "tone_mapping_function": Tonemap.ST2094_40,
     "use_dovi": True,
     "contrast_recovery": 0.0,
 }
@@ -279,7 +294,7 @@ for entry in clips_config:
             decimate = param
         elif param is Luma:
             luma = True
-        elif param in (HDR, DOVI):
+        elif param in (HDR, HDR10Plus, DOVI):
             tonemap_mode = param
         elif param is NoFPS:
             change_fps = False
@@ -393,6 +408,9 @@ for entry in clips_config:
         if tonemap_mode is HDR:
             srcname += "HDR)"
             clip = core.placebo.Tonemap(clip, **vsplacebo_hdr)
+        elif tonemap_mode is HDR10Plus:
+            srcname += "HDR10+)"
+            clip = core.placebo.Tonemap(clip, **vsplacebo_hdr10p)
         else:
             srcname += "DOVI)"
             clip = core.placebo.Tonemap(clip, **vsplacebo_dovi)
