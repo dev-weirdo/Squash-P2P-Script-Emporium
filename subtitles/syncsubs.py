@@ -1,4 +1,5 @@
 """
+version=1.01
 Subtitle file-names should end with a . followed by the language tag.
 For example: Juno.2007.AMZN.WEB.en-us.srt
 Anything that comes before ".en-us" can be whatever you want.
@@ -10,11 +11,13 @@ ffmpeg https://ffmpeg.org/download.html
 ffmpeg must be added to your PATH.
 """
 import argparse
+import os
 import re
 import sys
 import subprocess
+import time
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 ALPHABETICAL_CODE_MAP = {
     "en-US": "american.en-US",
@@ -30,9 +33,12 @@ ALPHABETICAL_CODE_MAP = {
     "yue-Hant": "cantonese.yue-Hant",
     "es-ES": "spain.es-ES",
     "es-419": "spanish.es-419",
+    "eu": "basque.eu",
+    "fi": "finnish.fi",
     "nl": "dutch.nl",
     "nl-BE": "dutch.nl-BE",
     "ka": "georgian.ka",
+    "gl": "galacian.gl",
     "de": "german.de",
     "el": "greek.el",
     "hr": "croatian.hr",
@@ -49,7 +55,8 @@ ALPHABETICAL_CODE_MAP_LOWER = {k.lower(): v for k, v in ALPHABETICAL_CODE_MAP.it
 
 AUDIO_EXTENSIONS = [
     ".ac3", ".ec3", ".eac3", ".aac", ".flac", ".wav",
-    ".thd", ".dts", ".dtshd", ".dtsma", ".opus"
+    ".thd", ".dts", ".dtshd", ".dtsma", ".opus", ".ogg",
+    ".dtshr", ".mlp", ".w64"
 ]
 
 PROGRESS_PATTERN = re.compile(r"^\s*\d{1,3}%\|.*$")
@@ -87,7 +94,9 @@ def process_subtitle(mkv_file: Path, subtitle_file: Path, output_dir: Path):
         new_file_name = filename.rsplit('.', 1)[0]
         new_file_name = re.sub(r"\.+", ".", new_file_name).strip(".")
         alphabetical_lang_code = get_alphabetical_lang_code(lang_code)
-        ENGLISH_CODES = {"en", "american.en-US", "australian.en-AU", "british.en-GB", "canadian.en-CA"}
+        ENGLISH_CODES = {"en", "american.en-US", "australian.en-AU", "british.en-GB", "canadian.en-CA",
+                         "en[sdh]", "american.en-US[sdh]", "australian.en-AU[sdh]", "british.en-GB[sdh]",
+                         "canadian.en-CA[sdh]"}
         if alphabetical_lang_code in ENGLISH_CODES:
             alphabetical_lang_code = "_" + alphabetical_lang_code
         output_file = output_dir / f"{new_file_name}.{alphabetical_lang_code}.srt"
@@ -97,7 +106,7 @@ def process_subtitle(mkv_file: Path, subtitle_file: Path, output_dir: Path):
         "ffs",
         str(mkv_file),
         "-i", str(subtitle_file),
-        "-o", str(output_file)
+        "-o", str(output_file),
     ]
     
     try:
@@ -118,7 +127,7 @@ def parse_args():
     parser.add_argument("--audio", type=str, default=None,
                     help="Optional audio file to sync to")
     parser.add_argument("--max-workers", type=int, default=None,
-                        help="Maximum number of parallel subtitle syncs (default: CPU count)")
+                        help="Maximum number of parallel subtitle syncs (default: CPU thread count)")
     return parser.parse_args()
 
 
@@ -151,15 +160,24 @@ def main():
     
         print(f"Using audio to sync: {audio_file.name}")
         print(f"Found {len(srt_files)} subtitles in {subs_directory}")
-        print(f"Processing in parallel (max workers = {args.max_workers or 'auto'})...\n")
-        futures = []
-        with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-            for s in srt_files:
-                futures.append(executor.submit(process_subtitle, temp_mkv, s, synced_dir))
-                
+        cores = os.cpu_count() or 4
+        workers = (
+            min(cores // 2, 4)
+            if args.max_workers is None
+            else args.max_workers
+        )
+        print(f"Processing in parallel (max workers = {workers})...\n")
+        start = time.perf_counter()
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(process_subtitle, temp_mkv, s, synced_dir)
+                for s in srt_files
+            ]
+
             for future in as_completed(futures):
-                output = future.result()
-                print(output)
+                print(future.result())
+        end = time.perf_counter()
+        print(f"Elapsed time: {end - start:.3f} seconds")
     finally:
         if temp_mkv.exists():
             temp_mkv.rename(audio_file)
