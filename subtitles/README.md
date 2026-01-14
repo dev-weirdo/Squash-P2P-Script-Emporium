@@ -180,3 +180,24 @@ A download button will become visible when you load a watch page for any title o
 
 ### Usage
 Add the script to your <a href="https://www.tampermonkey.net/">TamperMonkey</a> dashboard and save it. Then, load any watch page on HBO Max and press the download button.
+
+<h2><a href="https://github.com/9Oc/Squash-P2P-Scriptorium/blob/main/subtitles/subbi.py">subbi</a>
+<a href="https://www.python.org/downloads/release/python-3100/"><img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen" alt="Python 3.10+"></a></h2>
+
+`subbi.py` is a wrapper script that uses subby to convert subtitle files to SRT, fix common issues, and strip SDH text/lines.
+
+Dependencies:
+
+`pip install requests rich git+https://github.com/vevv/subby.git`
+<hr>
+
+### Usage
+To convert subtitles, simply add a directory as and argument when calling the script.
+```python
+subbi.py "path\to\subtitles"
+```
+
+To strip SDH text/lines from an SRT subtitle, use the `--strip-sdh` argument.
+```python
+subbi.py --strip-sdh "path\to\subtitle.srt"
+```
