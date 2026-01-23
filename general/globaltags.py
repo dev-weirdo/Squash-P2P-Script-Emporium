@@ -4,6 +4,8 @@ Generates an MKV global tags XML file using TMDB ID.
 
 Dependencies:
 pip install tvdb_v4_official requests rich
+
+@version 1.2
 """
 
 import re
@@ -16,11 +18,10 @@ from rich import print
 from tvdb_v4_official import TVDB
 
 # config
-TMDB_API_KEY = "TMDB_API_KEY" # <-- your TMDB api key here
-TVDB_API_KEY = "TVDB_API_KEY" # <-- your TVDB api key here
+TMDB_API_KEY = "YOUR_TMDB_API_KEY"
+TVDB_API_KEY = "YOUR_TVDB_API_KEY"
 
 tvdb = TVDB(TVDB_API_KEY)
-
 
 def sanitize(text):
         """Return a filesystem-safe version of a string."""
@@ -55,31 +56,102 @@ def get_imdb_id_from_tmdb(tmdb_id: str) -> str | None:
         return None, None, None
 
 
-def get_tvdb_movie_id(title: str, year: str = None) -> tuple[str | None, str | None, str | None, str | None]:
+def find_movie_objects(obj) -> list[dict]:
     """
-    Search TVDB for movie ID using title and optional year.
-    Returns a tuple (tvdb_id, matched_title, matched_year, slug)
+    Return all movie objects from tvdb search by remote ID results.
+    """
+    movies: list[dict] = []
+
+    def recurse(o):
+        if isinstance(o, dict):
+            # if there's a 'movie' key here, collect it
+            if 'movie' in o:
+                m = o['movie']
+                if isinstance(m, dict):
+                    movies.append(m)
+                elif isinstance(m, list):
+                    for mi in m:
+                        if isinstance(mi, dict):
+                            movies.append(mi)
+            
+            for v in o.values():
+                recurse(v)
+        elif isinstance(o, list):
+            for item in o:
+                recurse(item)
+        # primitives: nothing to do
+
+    recurse(obj)
+    return movies
+
+
+def find_movie_ids_tvdb(obj) -> list[str]:
+    """
+    Return a list of movie ids found in the tvdb movie objects.
+    """
+    ids: list[int] = []
+    for m in find_movie_objects(obj):
+        mid = m.get('id')
+        if isinstance(mid, int):
+            ids.append(mid)
+        else:
+            try:
+                if isinstance(mid, str) and mid.isdigit():
+                    ids.append(mid)
+            except Exception:
+                pass
+    return ids
+
+
+def get_first_movie_id_tvdb(obj) -> str | None:
+    ids = find_movie_ids(obj)
+    return ids[0] if ids else None
+
+
+def get_tvdb_movie_id(tmdb_id: str, title: str, year: str = None) -> tuple[str | None, str | None, str | None, str | None]:
+    """
+    Search TVDB for movie ID using remote ID search with fallback generic search using title and optional year.
+    Returns a tuple (tvdb_id, matched_title, matched_year, slug).
     """
     try:
-        results = tvdb.search(title, year=year, type="movie", lang="eng")
-        
+        results = tvdb.search_by_remote_id(tmdb_id)
+
         if not results or len(results) == 0:
-            print(f"No TVDB results found for: {title}")
-            return None, None, None, None
-        
+            results = tvdb.search(title, year=year, type="movie", lang="eng")
+            if not results or len(results) == 0:
+                print(f"No TVDB results found for: {title}")
+                return None, None, None, None
+
         best_match = None
-        
-        if year:
+        movie_objects = find_movie_objects(results)
+
+        if movie_objects is not None and len(movie_objects) > 0:
+            best_match = movie_objects[0]
+
+        if best_match is None:
             for result in results:
-                result_year = result.get('year', '')
-                if str(result_year) == str(year):
+                remote_ids = result.get('remoteIds')
+                if remote_ids is None or not remote_ids:
+                    continue
+                
+                result_tmdb_id = next(
+                    (r.get('id') for r in remote_ids
+                    if "themoviedb" in (r.get('sourceName') or "").lower()),
+                    None
+                )
+    
+                if result_tmdb_id is None:
+                    continue
+                
+                result_tvdb_id = result.get('tvdb_id')
+                if str(result_tmdb_id) == str(tmdb_id):
                     best_match = result
                     break
         
-        if not best_match:
+        if best_match is None:
             best_match = results[0]
         
-        tvdb_id = best_match.get('tvdb_id')
+        tvdb_id = best_match.get('tvdb_id') or best_match.get('id')
         matched_title = best_match.get('name', title)
         matched_year = best_match.get('year', '')
         slug = best_match.get('slug', str(tvdb_id))
@@ -97,16 +169,16 @@ def generate_xml(tmdb_id: str, imdb_id: str, tvdb_id: str) -> str:
     tags = ET.Element('Tags')
     tag = ET.SubElement(tags, 'Tag')
     
-    # TMDB entry
-    tmdb_simple = ET.SubElement(tag, 'Simple')
-    ET.SubElement(tmdb_simple, 'Name').text = 'TMDB'
-    ET.SubElement(tmdb_simple, 'String').text = f'movie/{tmdb_id}'
-    
     # IMDB entry
     if imdb_id:
         imdb_simple = ET.SubElement(tag, 'Simple')
         ET.SubElement(imdb_simple, 'Name').text = 'IMDB'
         ET.SubElement(imdb_simple, 'String').text = imdb_id
+    
+    # TMDB entry
+    tmdb_simple = ET.SubElement(tag, 'Simple')
+    ET.SubElement(tmdb_simple, 'Name').text = 'TMDB'
+    ET.SubElement(tmdb_simple, 'String').text = f'movie/{tmdb_id}'
     
     # TVDB entry
     if tvdb_id:
@@ -146,7 +218,7 @@ def main():
     else:
         print("Warning: IMDB ID not found")
     
-    tvdb_id, matched_title, matched_year, slug = get_tvdb_movie_id(title, tmdb_year)
+    tvdb_id, matched_title, matched_year, slug = get_tvdb_movie_id(tmdb_id, title, tmdb_year)
     
     if tvdb_id:
         print(f"\nTVDB match: [sea_green2]{matched_title}[/sea_green2] ({matched_year})")
