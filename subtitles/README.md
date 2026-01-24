@@ -192,7 +192,7 @@ Dependencies:
 <hr>
 
 ### Usage
-To convert subtitles, simply add a directory as and argument when calling the script.
+To convert subtitles, simply add a directory as an argument when calling the script.
 ```python
 subbi.py "path\to\subtitles"
 ```
