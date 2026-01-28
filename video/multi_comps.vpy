@@ -341,12 +341,12 @@ for entry in clips_config:
     
     # Load clip(s)
     if isinstance(filepath, tuple):
-        clips = [core.lsmas.LWLibavSource(p) for p in filepath]
+        clips = [core.ffms2.Source(p) for p in filepath]
         clip = clips[0]
         for c in clips[1:]:
             clip += c
     else:
-        clip = core.lsmas.LWLibavSource(filepath)
+        clip = core.ffms2.Source(filepath)
 
     # Decimate telecined video sources
     if (decimate):
@@ -356,7 +356,7 @@ for entry in clips_config:
     # Bake EL if provided
     clip_el_baked = None
     if el_path:
-        el = core.lsmas.LWLibavSource(el_path)
+        el = core.ffms2.Source(el_path)
         clip_el_baked = MapDolbyVision(clip, el)
         clip = clip_el_baked
         
