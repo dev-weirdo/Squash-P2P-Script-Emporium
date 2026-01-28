@@ -9,10 +9,13 @@ from pathlib import Path
 
 # vspreview comparison script.
 # Author: squash
-# Date: 07/1/2026
-# Version: 2.03
+# Date: 28/1/2026
+# Version: 2.04
 
 # Marker objects | DO NOT EDIT
+class _SkipMarker:
+    def __str__(self):
+        return "Skip"
 class _LumaMarker:
     def __str__(self):
         return "Luma"
@@ -72,6 +75,7 @@ class _BakeELMarker:
     def __str__(self):
         return f"(EL: {self.el_path})"
 
+Skip = _SkipMarker()
 Luma = _LumaMarker()
 HDR = _HDRMarker()
 HDR10Plus = _HDR10PlusMarker()
@@ -154,6 +158,7 @@ vsplacebo_hdr = {
     "dynamic_peak_detection": False,
     "gamut_mapping": Gamut.Perceptual,
     "tone_mapping_function": Tonemap.Mobius,
+    "hdr_metadata_type": HdrMetaType.HDR10,
     "use_dovi": False,
     "contrast_recovery": 0.0,
 }
@@ -253,6 +258,7 @@ def insert_blank_frames(clip: vs.VideoNode, positions: list[int], counts: list[i
 # Processing # DO NOT EDIT
 ##############
 for entry in clips_config:
+    skip = False
     filepath, filename, srcname = None, None, None
     trim_range = None
     padding = None
@@ -266,7 +272,10 @@ for entry in clips_config:
     el_path = None
 
     for param in entry:
-        if isinstance(param, str): # single video file
+        if isinstance(param, _SkipMarker):
+            skip = True
+            break
+        elif isinstance(param, str): # single video file
             if param.lower().endswith((".vob", ".m2ts", ".evo", ".mkv", ".mp4", ".avi", ".h264", ".h265", ".hevc", ".avc",
                                        ".m2v", ".mpg", ".mpeg")):
                 filepath = param
@@ -302,7 +311,10 @@ for entry in clips_config:
             el_path = param.el_path
         elif isinstance(param, _AddBordersMarker):
             borders = param
-
+    
+    if skip:
+        print("Skipping...")
+        continue
     if not filepath or not srcname:
         print("No filepath or source name detected, skipping...")
         continue
@@ -346,24 +358,19 @@ for entry in clips_config:
     if el_path:
         el = core.lsmas.LWLibavSource(el_path)
         clip_el_baked = MapDolbyVision(clip, el)
+        clip = clip_el_baked
         
     # Change FPS
     if change_fps:
         clip = core.std.AssumeFPS(clip, fpsnum=fpsnum, fpsden=fpsden)
-        if clip_el_baked:
-            clip_el_baked = core.std.AssumeFPS(clip_el_baked, fpsnum=fpsnum, fpsden=fpsden)
 
     # Trim
     if trim_range:
         clip = trim_frames(clip, trim_range)
-        if clip_el_baked:
-            clip_el_baked = trim_frames(clip_el_baked, trim_range)
         
     # Pad
     if padding:
         clip = insert_blank_frames(clip, padding.positions, padding.counts)
-        if clip_el_baked:
-            clip_el_baked = insert_blank_frames(clip_el_baked, padding.positions, padding.counts)
         
     # Resize
     if resize:
@@ -373,8 +380,6 @@ for entry in clips_config:
         clip = clip.resize.Spline36(resize.width, resize.height, dither_type="error_diffusion")
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
-        if clip_el_baked:
-            clip_el_baked = clip_el_baked.resize.Spline36(resize.width, resize.height, dither_type="error_diffusion")
 
     # Crop
     if crop_values:
@@ -388,8 +393,6 @@ for entry in clips_config:
         clip = core.std.CropRel(clip, l, r, t, b)
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
-        if clip_el_baked:
-            clip_el_baked = core.std.CropRel(clip_el_baked, l, r, t, b)
     
     # Add Borders
     if borders:
@@ -398,8 +401,6 @@ for entry in clips_config:
         clip = core.std.AddBorders(clip, borders.left, borders.right, borders.top, borders.bottom)
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
-        if clip_el_baked:
-            clip_el_baked = core.std.AddBorders(clip_el_baked, borders.left, borders.right, borders.top, borders.bottom)
 
     # Tonemap if HDR or DOVI marker
     if tonemap_mode is not None:
@@ -414,23 +415,15 @@ for entry in clips_config:
         else:
             srcname += "DOVI)"
             clip = core.placebo.Tonemap(clip, **vsplacebo_dovi)
-            if clip_el_baked:
-                clip_el_baked = clip_el_baked.resize.Bicubic(format=vs.YUV444P16)
-                clip_el_baked = core.placebo.Tonemap(clip_el_baked, **vsplacebo_dovi)
 
         clip = core.std.SetFrameProps(
             clip, _Matrix=vs.MATRIX_BT709, _Transfer=vs.TRANSFER_BT709, _Primaries=vs.PRIMARIES_BT709
         )
-        if clip_el_baked:
-            clip_el_baked = core.std.SetFrameProps(
-                clip_el_baked, _Matrix=vs.MATRIX_BT709, _Transfer=vs.TRANSFER_BT709, _Primaries=vs.PRIMARIES_BT709
-            )
 
     # Output
-    set_output(FrameInfo(clip, srcname), name=srcname)
     if clip_el_baked:
-        src_baked_name = f"{srcname} (EL Baked)"
-        set_output(FrameInfo(clip_el_baked, src_baked_name), name=src_baked_name)
+        srcname += " (EL Baked)"
+    set_output(FrameInfo(clip, srcname), name=srcname)
 
     if luma:
         adj_clip = fixlvls(clip)
