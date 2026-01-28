@@ -172,7 +172,7 @@ vsplacebo_dovi = {
     "dst_csp": ColorSpace.SDR,
     "dynamic_peak_detection": False,
     "gamut_mapping": Gamut.Perceptual,
-    "tone_mapping_function": Tonemap.ST2094_40,
+    "tone_mapping_function": Tonemap.Mobius,
     "use_dovi": True,
     "contrast_recovery": 0.0,
 }
