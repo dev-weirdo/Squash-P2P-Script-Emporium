@@ -1,35 +1,42 @@
 """
-@author squash
-
 Dependencies:
 pip install rich
 ffmpeg https://www.ffmpeg.org/download.html
 Ensure ffmpeg is in PATH.
+
+@version 2.0
 """
+import argparse
+import re
 import subprocess
 import sys
-import re
-import argparse
+import time
+import contextlib
 
-from rich import print
+from rich.console import Console
+
+console = Console()
 
 def find_idr_frames(video_file, target_frame, verbose: bool):
     """
-    Find if the target frame is IDR. If not, find the nearest bi-directional IDR frames.
-    video_file: Path to the H.264 video file
-    target_frame: Frame number to check
+    Determines whether the target frame is and IDR frame. If not, find the nearest bi-directional IDR frames.
+    video_file: Path to the H.264 video file.
+    target_frame: Frame number to check.
     """
+    start_time = time.time()
     # run ffmpeg trace_headers
     cmd = ['ffmpeg', '-i', str(video_file), '-c', 'copy', '-bsf:v', 'trace_headers', '-f', 'null', '-']
     
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     except FileNotFoundError as fe:
-        print(f"[red]{video_file} or ffmpeg not found, ensure ffmpeg is in PATH[/red]")
+        console.print(f"[red]{video_file} or ffmpeg not found, ensure ffmpeg is in PATH[/red]")
         sys.exit(1)
     except Exception as e:
-        print(f"[red]Error running ffmpeg:[/red] {e}")
+        console.print(f"[red]Error running ffmpeg:[/red] {e}")
         sys.exit(1)
+    
+    status_ctx = console.status("Starting scan...", spinner="dots") if verbose else contextlib.nullcontext()
     
     idr_frames = set()
     current_frame = -1
@@ -40,69 +47,77 @@ def find_idr_frames(video_file, target_frame, verbose: bool):
     
     # parse h264 bitstream headers
     try:
-        for line in process.stdout:
-            # remove unneeded line content
-            match = re.match(r'\[.*?\]\s+(.*)', line)
-            if not match:
-                continue
-            
-            content = match.group(1).strip().lower()
-            
-            # check for new frame, denoted by access unit delimiter
-            if content == "access unit delimiter":
-                current_frame += 1
-                in_slice_header = False
+        with status_ctx as status:
+            for line in process.stdout:
+                # remove unneeded line content
+                match = re.match(r'\[.*?\]\s+(.*)', line)
+                if not match:
+                    continue
                 
-                # if we've found an IDR frame after the target, stop
-                if idr_after is not None:
-                    process.terminate()
-                    break
+                content = match.group(1).strip().lower()
                 
-                continue
-            
-            # check for slice header
-            if content == "slice header":
-                in_slice_header = True
-                continue
-            
-            # check if frame is IDR, denoted by slice header having nal_unit_type = 5
-            if in_slice_header and "nal_unit_type" in content:
-                parts = content.split('=')
-                if len(parts) >= 2:
-                    nal_type = parts[-1].strip()
-                    if nal_type == '5':
-                        if current_frame == target_frame:
-                            # success, target frame as IDR, stop
-                            target_is_idr = True
-                            idr_frames.add(current_frame)
-                            process.terminate()
-                            break
-                        elif current_frame < target_frame:
-                            idr_before = current_frame
-                            idr_frames.add(current_frame)
-                        elif current_frame > target_frame and idr_after is None:
-                            idr_after = current_frame
-                            idr_frames.add(current_frame)
+                # check for new frame, denoted by access unit delimiter
+                if content == "access unit delimiter":
+                    current_frame += 1
+                    in_slice_header = False
+                    
+                    if verbose and status is not None:
+                        status.update(f"Scanning frame {current_frame}")
+                    
+                    # if we've found an IDR frame after the target, stop
+                    if idr_after is not None:
+                        process.terminate()
+                        break
+                    
+                    continue
+                
+                # check for slice header
+                if content == "slice header":
+                    in_slice_header = True
+                    continue
+                
+                # check if frame is IDR, denoted by slice header having nal_unit_type = 5
+                if in_slice_header and "nal_unit_type" in content:
+                    parts = content.split('=')
+                    if len(parts) >= 2:
+                        nal_type = parts[-1].strip()
+                        if nal_type == '5':
+                            if current_frame == target_frame:
+                                # success, target frame as IDR, stop
+                                target_is_idr = True
+                                idr_frames.add(current_frame)
+                                process.terminate()
+                                break
+                            elif current_frame < target_frame:
+                                idr_before = current_frame
+                                idr_frames.add(current_frame)
+                            elif current_frame > target_frame and idr_after is None:
+                                idr_after = current_frame
+                                idr_frames.add(current_frame)
     finally:
         process.wait()
     
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    console.print(f"\n[blue]Execution time: {elapsed_time:.3f} seconds[/blue]")
+    
     if target_is_idr:
-        print(f"[green]Frame {target_frame} is an IDR frame[/green]")
+        console.print(f"[green]Frame {target_frame} is an IDR frame[/green]")
         return
     
-    print(f"[yellow]Frame {target_frame} is NOT an IDR frame[/yellow]")
+    console.print(f"[yellow]Frame {target_frame} is NOT an IDR frame[/yellow]")
     if idr_before is not None:
-        print(f"Nearest IDR frame before: [green]{idr_before}[/green]")
+        console.print(f"Nearest IDR frame before: [green]{idr_before}[/green]")
     else:
-        print("No IDR frame found before the target frame.")
+        console.print("No IDR frame found before the target frame.")
     
     if idr_after is not None:
-        print(f"Nearest IDR frame after: [green]{idr_after}[/green]")
+        console.print(f"Nearest IDR frame after: [green]{idr_after}[/green]")
     else:
-        print("No IDR frame found after the target frame.")
+        console.print("No IDR frame found after the target frame.")
         
     if verbose:
-        print(f"All IDR frames found: [green]{sorted(idr_frames)}[/green]")
+        console.print(f"All IDR frames found: [green]{sorted(idr_frames)}[/green]")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -118,27 +133,26 @@ def main():
     parser.add_argument('-f', '--frame', type=int, required=True,
                         help='Frame number to check')
     parser.add_argument('-v', '--verbose', action='store_true',
-                        help='Prints a list of all IDR frames from 0 -> --frame')
+                        help='console.prints a list of all IDR frames from 0 -> --frame')
     
     args = parser.parse_args()
     
     video_file = args.video_file
     if not video_file.endswith(".h264") or video_file.endswith(".avc"):
-        print(f"[yellow]Video file must be a raw h264 stream, h264 file headers may not be detected for:[/yellow] {video_file}")
+        console.print(f"[yellow]Video file must be a raw h264 stream, h264 file headers may not be detected for:[/yellow] {video_file}")
         
     try:
         frame = int(args.frame)
     except ValueError as ve:
-        print(f"[red]Frame number must be an integer[/red]\n{ve}")
+        console.print(f"[red]Frame number must be an integer[/red]\n{ve}")
         sys.exit(1)
     verbose = args.verbose
     
     if frame < 0:
-        print("[red]Frame number must be non-negative[/red]")
+        console.print("[red]Frame number must be non-negative[/red]")
         sys.exit(1)
     
     find_idr_frames(video_file, frame, verbose)
 
 if __name__ == "__main__":
-
     main()
