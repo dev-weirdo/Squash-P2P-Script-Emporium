@@ -5,7 +5,7 @@ Generates an MKV global tags XML file using TMDB ID.
 Dependencies:
 pip install tvdb_v4_official requests rich
 
-@version 1.2
+@version 1.3
 """
 
 import re
@@ -108,13 +108,13 @@ def get_first_movie_id_tvdb(obj) -> str | None:
     return ids[0] if ids else None
 
 
-def get_tvdb_movie_id(tmdb_id: str, title: str, year: str = None) -> tuple[str | None, str | None, str | None, str | None]:
+def get_tvdb_movie_id(imdb_id: str, title: str, year: str = None) -> tuple[str | None, str | None, str | None, str | None]:
     """
-    Search TVDB for movie ID using remote ID search with fallback generic search using title and optional year.
-    Returns a tuple (tvdb_id, matched_title, matched_year, slug).
+    Search TVDB for movie ID using title and optional year.
+    Returns a tuple (tvdb_id, matched_title, matched_year, slug)
     """
     try:
-        results = tvdb.search_by_remote_id(tmdb_id)
+        results = tvdb.search_by_remote_id(imdb_id)
 
         if not results or len(results) == 0:
             results = tvdb.search(title, year=year, type="movie", lang="eng")
@@ -218,7 +218,7 @@ def main():
     else:
         print("Warning: IMDB ID not found")
     
-    tvdb_id, matched_title, matched_year, slug = get_tvdb_movie_id(tmdb_id, title, tmdb_year)
+    tvdb_id, matched_title, matched_year, slug = get_tvdb_movie_id(imdb_id, title, tmdb_year)
     
     if tvdb_id:
         print(f"\nTVDB match: [sea_green2]{matched_title}[/sea_green2] ({matched_year})")
