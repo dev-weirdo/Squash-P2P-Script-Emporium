@@ -1,5 +1,5 @@
 """
-suppf.py v1.1
+suppf.py v1.3
 @author squash
 
 suppf is PGS subtitle palette fixer that corrects common subtitle color issues.
@@ -8,17 +8,20 @@ Note that this script should not be used on subtitles which are
 intentionally color coded such as SDH based color coding.
 
 Usage:
-  python suppf.py input.sup output.sup
-  python suppf.py input.sup output.sup --main-color yellow
-  python suppf.py input.sup output.sup --main-color blue
-  python suppf.py input.sup output.sup --main-color a7a792
+  suppf.py input.sup
+  suppf.py input.sup --main-color yellow
+  suppf.py input.sup --main-color blue
+  suppf.py input.sup --main-color a7a792
   append --quiet for no debug output
+  append --no-artifact to leave possible artifact colors unchanged
 """
-import sys
+import argparse
+import math
 import os
 import struct
-import math
-import argparse
+import sys
+
+from pathlib import Path
 
 # color helpers
 def clamp(v):
@@ -144,7 +147,19 @@ def is_main_text_color(r, g, b, target_color, tolerance=40, user_specified=False
 
     # direct color match (lenient or strict depending on user_specified)
     if is_similar_color(r, g, b, tr, tg, tb, tol):
-        return True
+        # when user specifies a color, require hue similarity to avoid false positives
+        if user_specified:
+            h1, _, _ = rgb_to_hsl(r, g, b)
+            h2, _, _ = rgb_to_hsl(tr, tg, tb)
+    
+            hue_diff = abs(h1 - h2)
+            if hue_diff > 180:
+                hue_diff = 360 - hue_diff
+    
+            if hue_diff < 25:
+                return True
+        else:
+            return True
     
     # check if it's a darker version (gradient) of the main color
     # same hue but lower brightness could be a gradient
@@ -212,7 +227,7 @@ def is_artifact_color(r, g, b, main_color=None):
     
     return False
 
-def map_rgba_universal(r, g, b, a, main_color=None, user_specified=False):
+def map_rgba_universal(r, g, b, a, main_color=None, user_specified=False, artifact_fix=True):
     """
     Universal color mapping for fixing the bad colors -> grayscale
     Sets artifact colors to 0 alpha
@@ -224,7 +239,7 @@ def map_rgba_universal(r, g, b, a, main_color=None, user_specified=False):
         return (r, g, b, a)
     
     # remove artifact colors
-    if is_artifact_color(r, g, b, main_color):
+    if artifact_fix and is_artifact_color(r, g, b, main_color):
         return (0, 0, 0, 0)
     
     # preserve black/dark colors (likely outlines)
@@ -251,6 +266,10 @@ def map_rgba_universal(r, g, b, a, main_color=None, user_specified=False):
         else:
             gray_val = int(luminance)
             return (clamp(gray_val), clamp(gray_val), clamp(gray_val), a)
+    
+    # if user explicitly specified a main color, leave all other colors untouched
+    if user_specified and main_color and not is_main_text_color(r, g, b, main_color, user_specified=True):
+        return (r, g, b, a)
     
     # for any remaining colors, convert to grayscale based on luminance
     # this handles edge cases and maintains gradients
@@ -383,7 +402,7 @@ def parse_main_color_arg(color_str):
     
     return None
 
-def process_file(in_path, out_path, main_color_arg=None, verbose=True):
+def process_file(in_path, out_path, main_color_arg=None, artifact_fix=True, verbose=True):
     with open(in_path, "rb") as f:
         data = f.read()
 
@@ -440,7 +459,7 @@ def process_file(in_path, out_path, main_color_arg=None, verbose=True):
         for e in entries:
             r,g,b = ycrcb_to_rgb(e["Y"], e["Cr"], e["Cb"])
             a = e["A"]
-            nr, ng, nb, na = map_rgba_universal(r, g, b, a, main_color, user_specified=user_specified)
+            nr, ng, nb, na = map_rgba_universal(r, g, b, a, main_color, user_specified=user_specified, artifact_fix=artifact_fix)
             y2, cr2, cb2 = rgb_to_ycrcb(nr, ng, nb)
             new_entries.append({"entry_id": e["entry_id"], "Y": y2, "Cr": cr2, "Cb": cb2, "A": na})
 
@@ -486,14 +505,14 @@ def process_file(in_path, out_path, main_color_arg=None, verbose=True):
     if last_pos < len(data):
         out.extend(data[last_pos:])
 
-    # create backup
-    bak = in_path + ".orig_bak"
-    if not os.path.exists(bak):
-        print(f"Creating backup: {bak}")
-        with open(bak, "wb") as f:
-            f.write(data)
-    else:
-        print(f"Backup already exists: {bak}")
+    #create backup
+    #bak = in_path + ".orig_bak"
+    #if not os.path.exists(bak):
+    #    print(f"Creating backup: {bak}")
+    #    with open(bak, "wb") as f:
+    #        f.write(data)
+    #else:
+    #    print(f"Backup already exists: {bak}")
 
     with open(out_path, "wb") as f:
         f.write(out)
@@ -505,20 +524,20 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python suppf.py input.sup output.sup
-  python suppf.py input.sup output.sup --main-color yellow
-  python suppf.py input.sup output.sup --main-color blue  
-  python suppf.py input.sup output.sup --main-color FF6600
-  python suppf.py input.sup output.sup --main-color --quiet
+  python suppf.py input.sup
+  python suppf.py input.sup --main-color yellow
+  python suppf.py input.sup --main-color blue  
+  python suppf.py input.sup --main-color FF6600
+  python suppf.py input.sup --main-color --quiet
 
 Supported color names: yellow, blue, cyan, green, red, orange, purple, pink, lime
 Or use hex format: RRGGBB (e.g., FF6600)
         """)
     
     parser.add_argument("input", help="Input .sup file")
-    parser.add_argument("output", help="Output .sup file")  
     parser.add_argument("--main-color", 
-                       help="Main text color to convert (auto-detect if not specified). Supports color names or hex #RRGGBB")
+                       help="Main text color to convert (auto-detect if not specified). Supports color names or hex RRGGBB")
+    parser.add_argument("--no-artifact", action="store_true", help="Turn off artifact color fixing.")
     parser.add_argument("--quiet", "-q", action="store_true", 
                        help="Quiet mode - minimal output")
     
@@ -529,5 +548,7 @@ Or use hex format: RRGGBB (e.g., FF6600)
         sys.exit(1)
     
     verbose = not args.quiet
-    process_file(args.input, args.output, args.main_color, verbose)
-
+    artifact_fix = not args.no_artifact
+    input_path = Path(args.input)
+    output_path = input_path.with_name(input_path.stem + "_fix" + input_path.suffix)
+    process_file(args.input, str(output_path), args.main_color, artifact_fix, verbose)
