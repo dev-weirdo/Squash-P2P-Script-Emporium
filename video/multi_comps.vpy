@@ -9,8 +9,8 @@ from pathlib import Path
 
 # vspreview comparison script.
 # Author: squash
-# Date: 28/1/2026
-# Version: 2.04
+# Date: 10/2/2026
+# Version: 2.05
 
 # Marker objects | DO NOT EDIT
 class _SkipMarker:
@@ -121,9 +121,10 @@ def BakeEL(el):
 #       - Decimate(order) → Decimates duplicate frames in telecined video sources
 #       - order is an int, accepted values are 0 or 1 (0 for Bottom Field, 1 for Top Field)
 #   - Luma Adjustment:
-#       - Luma → Output an additional clip with luma adjustment for gamma bugged discs
+#       - Luma → Applies luminance correction to the clip to fix clips that suffer from the 0.88 gamma bug
 #   - Tonmapping:
 #       - HDR → tonemap the clip using HDR10 metadata
+#       - HDR10Plus → tonemap the clip using HDR10+ metadata
 #       - DOVI → tonemap the clip using Dolby Vision metadata
 #   - FPS Adjustment:
 #       - NoFPS → prevents the clip from having its framerate normalized
@@ -131,11 +132,14 @@ def BakeEL(el):
 #   - Bake Enhancement Layer:
 #       - BakeEL(path) → Bakes the Dolby Vision enhancement layer into the video stream
 #       - Provide the file path to the EL.mkv as an argument
+#   - Skip:
+#       - Skip → Skips the clip for output in vspreview
 # Examples:
 #   (r"file1.mkv", "Source1", (10, 200), Crop(0, 0, 140, 140))
 #   (r"file2.EVO", "Source2", 24, HDR)
 #   (r"file3.vob", "Source3", Luma, NoFPS)
 #   ((r"part1.m2ts", r"part2.m2ts"), "Source4", Resize(1920, 1080), DOVI)
+#   (r"00002.m2ts", "Source5", AddBorders(0, 0, 140, 140), HDR10Plus, Pad([10000],[20]))
 clips_config = [
     (r"", "Source1",),
     (r"", "Source2",),
@@ -158,7 +162,6 @@ vsplacebo_hdr = {
     "dynamic_peak_detection": False,
     "gamut_mapping": Gamut.Perceptual,
     "tone_mapping_function": Tonemap.Mobius,
-    "hdr_metadata_type": HdrMetaType.HDR10,
     "use_dovi": False,
     "contrast_recovery": 0.0,
 }
@@ -167,6 +170,8 @@ vsplacebo_hdr10p = {
     "dst_csp": ColorSpace.SDR,
     "dynamic_peak_detection": False,
     "gamut_mapping": Gamut.Perceptual,
+    # ST2094_40 is theoretically more accurate for dynamic HDR10+ metadata, but if the result is
+    # not satisfactory, Mobius can be substituted
     "tone_mapping_function": Tonemap.ST2094_40,
     "hdr_metadata_type": HdrMetaType.HDR10Plus,
     "use_dovi": False,
@@ -186,12 +191,12 @@ vsplacebo_dovi = {
 def trim_frames(clip: vs.VideoNode, trims):
     """
     Delete frames using std.DeleteFrames.
-    Supports:
+    Argument:
       - None: no trimming
       - int: delete frames from start up to this frame (exclusive)
       - tuple: (start, end) single trim range [inclusive]
       - list of tuples: multiple trim ranges [inclusive]
-    Frame numbers are interpreted SEQUENTIALLY on the current clip,
+    Frame numbers are interpreted sequentially on the current clip,
     so they match what you see in vspreview after previous trims.
     """
     if trims is None:
@@ -212,14 +217,14 @@ def trim_frames(clip: vs.VideoNode, trims):
 def insert_blank_frames(clip: vs.VideoNode, positions: list[int], counts: list[int] | int = 1) -> vs.VideoNode:
     """
     Insert blank frames at specific positions, treating positions as 
-    target indices in the OUTPUT timeline.
+    target indices in the output timeline.
     """
     if isinstance(counts, int):
         counts = [counts] * len(positions)
     if len(positions) != len(counts):
         raise ValueError("Positions and counts must have the same length if counts is a list.")
     
-    # Sort by position to handle them in order
+    # sort by position to handle them in order
     pairs = sorted(zip(positions, counts), key=lambda x: x[0])
     
     out = []
@@ -227,28 +232,28 @@ def insert_blank_frames(clip: vs.VideoNode, positions: list[int], counts: list[i
     cumulative_offset = 0
     
     for pos, count in pairs:
-        # We need to find "where is this frame in the original source?"
-        # The target position 'pos' includes the 'cumulative_offset' of frames we added previously.
-        # So, the original source index is: pos - cumulative_offset
+        # we need to find where this frame is in the original source
+        # the target position 'pos' includes the 'cumulative_offset' of frames we added previously
+        # so, the original source index is: pos - cumulative_offset
         current_original_idx = pos - cumulative_offset
         
-        # Check to ensure we haven't asked for a position that doesn't exist yet
+        # check to ensure we haven't asked for a position that doesn't exist yet
         # (e.g., trying to insert at frame 100 when we've only processed 50 source frames)
         if current_original_idx < prev_original_idx:
              raise ValueError(f"Position {pos} overlaps with previous insertions.")
 
-        # Slice from where we left off up to the calculated source index
-        # We use current_original_idx + 1 because we want to include the frame AT that index before the blank
+        # slice from where we left off up to the calculated source index
+        # we use current_original_idx + 1 because we want to include the frame at that index before the blank
         out.append(clip[prev_original_idx : current_original_idx + 1])
         
-        # Add the blank frames
+        # add the blank frames
         out.append(core.std.BlankClip(clip, length=count))
         
-        # Update trackers
+        # update trackers
         prev_original_idx = current_original_idx + 1
         cumulative_offset += count
     
-    # Append whatever is left of the original clip
+    # append whatever is left of the original clip
     out.append(clip[prev_original_idx:])
     
     return core.std.Splice(clips=out, mismatch=True)
@@ -288,7 +293,7 @@ for entry in clips_config:
                 filename = tuple(Path(p).name for p in filepath)
             elif len(param) == 2:
                 trim_range = param
-        elif isinstance(param, list): # list is multiple trim ranges
+        elif isinstance(param, list) and all(isinstance(x, tuple) for x in param): # multiple trim ranges
             if all(isinstance(x, tuple) and len(x) == 2 and all(isinstance(v, int) for v in x) for x in param):
                 trim_range = param
         elif isinstance(param, int): # int is a single trim value
@@ -329,7 +334,7 @@ for entry in clips_config:
         (borders,      f"Borders: {borders}"),
         (decimate,     f"Decimate: {decimate}"),
         (tonemap_mode, f"Tonemapping: {tonemap_mode}"),
-        (luma,         f"Output luma adjusted: {luma}"),
+        (luma,         f"Luma adjustment: {luma}"),
         (el_path,      f"Baking EL: {el_path}")
     ]
 
@@ -339,24 +344,26 @@ for entry in clips_config:
         branch = "└──" if i == len(items) - 1 else "├──"
         print(f"  {branch} {text}")
     
+    clip = None
+    
     # Load clip(s)
     if isinstance(filepath, tuple):
-        clips = [core.ffms2.Source(p) for p in filepath]
+        clips = [core.lsmas.LWLibavSource(p) for p in filepath]
         clip = clips[0]
         for c in clips[1:]:
             clip += c
     else:
-        clip = core.ffms2.Source(filepath)
+        clip = core.lsmas.LWLibavSource(filepath)
 
     # Decimate telecined video sources
-    if (decimate):
+    if decimate:
         clip = core.vivtc.VFM(clip, decimate.order)
         clip = core.vivtc.VDecimate(clip)
         
     # Bake EL if provided
     clip_el_baked = None
     if el_path:
-        el = core.ffms2.Source(el_path)
+        el = core.lsmas.LWLibavSource(el_path)
         clip_el_baked = MapDolbyVision(clip, el)
         clip = clip_el_baked
         
@@ -402,7 +409,7 @@ for entry in clips_config:
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
 
-    # Tonemap if HDR or DOVI marker
+    # Tonemap
     if tonemap_mode is not None:
         srcname += " (Tonemapped "
         clip = clip.resize.Bicubic(format=vs.YUV444P16)
@@ -423,8 +430,10 @@ for entry in clips_config:
     # Output
     if clip_el_baked:
         srcname += " (EL Baked)"
-    set_output(FrameInfo(clip, srcname), name=srcname)
 
     if luma:
-        adj_clip = fixlvls(clip)
-        set_output(FrameInfo(adj_clip, f"{srcname} (Luma adjusted)"), name=f"{srcname} (Luma adjusted)")
+        clip = fixlvls(clip)
+        srcname += " (Luma adjusted)"
+
+    set_output(FrameInfo(clip, srcname), name=srcname)
+
