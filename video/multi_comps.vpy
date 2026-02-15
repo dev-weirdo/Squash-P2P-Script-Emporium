@@ -5,12 +5,13 @@ from awsmfunc.types.placebo import PlaceboColorSpace as ColorSpace
 from awsmfunc.types.placebo import PlaceboTonemapFunction as Tonemap
 from awsmfunc.types.placebo import PlaceboGamutMapping as Gamut
 from awsmfunc.types.placebo import PlaceboHdrMetadataType as HdrMetaType
+from enum import Enum, auto
 from pathlib import Path
 
 # vspreview comparison script.
 # Author: squash
-# Date: 10/2/2026
-# Version: 2.05
+# Date: 15/2/2026
+# Version: 2.07
 
 # Marker objects | DO NOT EDIT
 class _SkipMarker:
@@ -74,6 +75,18 @@ class _BakeELMarker:
         self.el_path = el_path
     def __str__(self):
         return f"(EL: {self.el_path})"
+class Engine(Enum):
+    BESTSOURCE = auto()
+    FFMS2 = auto()
+    LSMASH = auto()
+    
+    def __str__(self):
+        return {
+            Engine.BESTSOURCE: "BestSource",
+            Engine.FFMS2: "ffms2",
+            Engine.LSMASH: "LSMASH",
+        }[self]
+    
 
 Skip = _SkipMarker()
 Luma = _LumaMarker()
@@ -134,12 +147,17 @@ def BakeEL(el):
 #       - Provide the file path to the EL.mkv as an argument
 #   - Skip:
 #       - Skip → Skips the clip for output in vspreview
+#   - Engine:
+#       - Sets the video indexing engine to one of the three available options in VapourSynth. Defaults to using LSMASH.
+#       - Engine.LSMASH → Sets the video indexing engine to be LSMASH.
+#       - Engine.BESTSOURCE → Sets the video indexing engine to be BestSource.
+#       - Engine.FFMS2 → Sets the video indexing engine to be ffms2.
 # Examples:
 #   (r"file1.mkv", "Source1", (10, 200), Crop(0, 0, 140, 140))
 #   (r"file2.EVO", "Source2", 24, HDR)
 #   (r"file3.vob", "Source3", Luma, NoFPS)
 #   ((r"part1.m2ts", r"part2.m2ts"), "Source4", Resize(1920, 1080), DOVI)
-#   (r"00002.m2ts", "Source5", AddBorders(0, 0, 140, 140), HDR10Plus, Pad([10000],[20]))
+#   (r"00002.m2ts", "Source5", AddBorders(0, 0, 140, 140), HDR10Plus, Pad([10000],[20]), Engine.FFMS2)
 clips_config = [
     (r"", "Source1",),
     (r"", "Source2",),
@@ -275,6 +293,7 @@ for entry in clips_config:
     tonemap_mode = None
     change_fps = True
     el_path = None
+    engine = None
 
     for param in entry:
         if isinstance(param, _SkipMarker):
@@ -316,6 +335,9 @@ for entry in clips_config:
             el_path = param.el_path
         elif isinstance(param, _AddBordersMarker):
             borders = param
+        elif isinstance(param, Engine):
+            engine = param
+            
     
     if skip:
         print("Skipping...")
@@ -323,9 +345,13 @@ for entry in clips_config:
     if not filepath or not srcname:
         print("No filepath or source name detected, skipping...")
         continue
+    
+    if engine is None:
+        engine = Engine.LSMASH
 
     print(f"Loading clip: {filename} ({srcname})")
     options = [
+        (engine,       f"Engine: {engine}"),
         (change_fps,   f"Normalize FPS: {change_fps}"),
         (trim_range,   f"Trim: {trim_range}"),
         (padding,      f"Pad: {padding}"),
@@ -345,15 +371,25 @@ for entry in clips_config:
         print(f"  {branch} {text}")
     
     clip = None
-    
+
     # Load clip(s)
     if isinstance(filepath, tuple):
-        clips = [core.lsmas.LWLibavSource(p) for p in filepath]
+        if engine is Engine.LSMASH:
+            clips = [core.lsmas.LWLibavSource(p) for p in filepath]
+        elif engine is Engine.FFMS2:
+            clips = [core.ffms2.Source(p) for p in filepath]
+        elif engine is Engine.BESTSOURCE:
+            clips = [core.bs.VideoSource(p) for p in filepath]
         clip = clips[0]
         for c in clips[1:]:
             clip += c
     else:
-        clip = core.lsmas.LWLibavSource(filepath)
+        if engine is Engine.LSMASH:
+            clip = core.lsmas.LWLibavSource(filepath)
+        elif engine is Engine.FFMS2:
+            clip = core.ffms2.Source(filepath)
+        elif engine is Engine.BESTSOURCE:
+            clip = core.bs.VideoSource(filepath)
 
     # Decimate telecined video sources
     if decimate:
