@@ -103,7 +103,6 @@ def find_idr_frames(video_file, target_frame, verbose: bool):
     
     if target_is_idr:
         console.print(f"[green]Frame {target_frame} is an IDR frame[/green]")
-        return
     
     console.print(f"[yellow]Frame {target_frame} is NOT an IDR frame[/yellow]")
     if idr_before is not None:
@@ -156,3 +155,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
