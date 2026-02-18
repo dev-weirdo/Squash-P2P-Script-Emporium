@@ -10,8 +10,8 @@ from pathlib import Path
 
 # vspreview comparison script.
 # Author: squash
-# Date: 15/2/2026
-# Version: 2.07
+# Date: 17/2/2026
+# Version: 2.08
 
 # Marker objects | DO NOT EDIT
 class _SkipMarker:
@@ -32,13 +32,13 @@ class _DOVIMarker:
 class _FPSMarker:
     def __str__(self):
         return "No FPS change"
-class _ResizeMarker:
+class Resize:
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
     def __str__(self):
         return f"({self.width}x{self.height})"
-class _CropMarker:
+class Crop:
     def __init__(self, left: int, right: int, top: int, bottom: int):
         self.left = left
         self.right = right
@@ -46,7 +46,7 @@ class _CropMarker:
         self.bottom = bottom
     def __str__(self):
         return f"(Left:{self.left},Right:{self.right},Top:{self.top},Bottom:{self.bottom})"
-class _AddBordersMarker:
+class AddBorders:
     def __init__(self, left: int, right: int, top: int, bottom: int):
         self.left = left
         self.right = right
@@ -54,7 +54,7 @@ class _AddBordersMarker:
         self.bottom = bottom
     def __str__(self):
         return f"(Left:{self.left},Right:{self.right},Top:{self.top},Bottom:{self.bottom})"
-class _PadMarker:
+class Pad:
     def __init__(self, positions: list[int], counts: list[int] | int = 1):
         if isinstance(counts, int):
             counts = [counts] * len(positions)
@@ -65,12 +65,12 @@ class _PadMarker:
         self.counts = counts
     def __str__(self):
         return "(" + ", ".join(f"after {p}: {c} blank frame(s)" for p, c in zip(self.positions, self.counts)) + ")"
-class _DecimateMarker:
+class Decimate:
     def __init__(self, order):
         self.order = order
     def __str__(self):
         return f"Field order ({ {1: 'Top', 0: 'Bottom'}.get(self.order, 'Unknown') })"
-class _BakeELMarker:
+class BakeEL:
     def __init__(self, el_path: str):
         self.el_path = el_path
     def __str__(self):
@@ -94,18 +94,6 @@ HDR = _HDRMarker()
 HDR10Plus = _HDR10PlusMarker()
 DOVI = _DOVIMarker()
 NoFPS = _FPSMarker()
-def Resize(width, height):
-    return _ResizeMarker(width, height)
-def Crop(left, right, top, bottom):
-    return _CropMarker(left, right, top, bottom)
-def AddBorders(left, right, top, bottom):
-    return _AddBordersMarker(left, right, top, bottom)
-def Pad(positions, counts):
-    return _PadMarker(positions, counts)
-def Decimate(order):
-    return _DecimateMarker(order)
-def BakeEL(el):
-    return _BakeELMarker(el)
 
 ##########
 # Config #
@@ -296,12 +284,12 @@ for entry in clips_config:
     engine = None
 
     for param in entry:
-        if isinstance(param, _SkipMarker):
+        if param is Skip:
             skip = True
             break
         elif isinstance(param, str): # single video file
-            if param.lower().endswith((".vob", ".m2ts", ".evo", ".mkv", ".mp4", ".avi", ".h264", ".h265", ".hevc", ".avc",
-                                       ".m2v", ".mpg", ".mpeg")):
+            if param.lower().endswith((".m2ts", ".h264", ".avc", ".h265", ".hevc", ".mkv", ".evo",
+                                       ".vob", ".mp4", ".m2v", ".mpg", ".mpeg", ".avi",)):
                 filepath = param
                 filename = Path(filepath).name
             else:
@@ -317,13 +305,13 @@ for entry in clips_config:
                 trim_range = param
         elif isinstance(param, int): # int is a single trim value
             trim_range = param
-        elif isinstance(param, _PadMarker):
+        elif isinstance(param, Pad):
             padding = param
-        elif isinstance(param, _CropMarker):
+        elif isinstance(param, Crop):
             crop_values = param
-        elif isinstance(param, _ResizeMarker):
+        elif isinstance(param, Resize):
             resize = param
-        elif isinstance(param, _DecimateMarker):
+        elif isinstance(param, Decimate):
             decimate = param
         elif param is Luma:
             luma = True
@@ -331,21 +319,20 @@ for entry in clips_config:
             tonemap_mode = param
         elif param is NoFPS:
             change_fps = False
-        elif isinstance(param, _BakeELMarker):
+        elif isinstance(param, BakeEL):
             el_path = param.el_path
-        elif isinstance(param, _AddBordersMarker):
+        elif isinstance(param, AddBorders):
             borders = param
         elif isinstance(param, Engine):
             engine = param
-            
-    
+
     if skip:
         print("Skipping...")
         continue
     if not filepath or not srcname:
         print("No filepath or source name detected, skipping...")
         continue
-    
+
     if engine is None:
         engine = Engine.LSMASH
 
@@ -369,7 +356,7 @@ for entry in clips_config:
     for i, text in enumerate(items):
         branch = "└──" if i == len(items) - 1 else "├──"
         print(f"  {branch} {text}")
-    
+
     clip = None
 
     # Load clip(s)
@@ -395,14 +382,14 @@ for entry in clips_config:
     if decimate:
         clip = core.vivtc.VFM(clip, decimate.order)
         clip = core.vivtc.VDecimate(clip)
-        
+
     # Bake EL if provided
     clip_el_baked = None
     if el_path:
         el = core.lsmas.LWLibavSource(el_path)
         clip_el_baked = MapDolbyVision(clip, el)
         clip = clip_el_baked
-        
+
     # Change FPS
     if change_fps:
         clip = core.std.AssumeFPS(clip, fpsnum=fpsnum, fpsden=fpsden)
@@ -410,11 +397,11 @@ for entry in clips_config:
     # Trim
     if trim_range:
         clip = trim_frames(clip, trim_range)
-        
+
     # Pad
     if padding:
         clip = insert_blank_frames(clip, padding.positions, padding.counts)
-        
+
     # Resize
     if resize:
         needs_resampling = resize.width % 2 != 0 or resize.height % 2 != 0
@@ -436,7 +423,7 @@ for entry in clips_config:
         clip = core.std.CropRel(clip, l, r, t, b)
         if (clip.width % 2 == 0 and clip.height % 2 == 0):
             clip = clip.resize.Bicubic(format=vs.YUV420P10)
-    
+
     # Add Borders
     if borders:
         if any(v % 2 for v in (borders.left, borders.right, borders.top, borders.bottom)):
