@@ -6,7 +6,7 @@
 
 Dependencies:
 
-`pip install rich`
+`pip install rich av`
 
 [ffmpeg](https://www.ffmpeg.org/download.html) must be installed and in your PATH.
 <hr>
