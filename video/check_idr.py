@@ -1,10 +1,10 @@
 """
 Dependencies:
-pip install rich
+pip install rich av
 ffmpeg https://www.ffmpeg.org/download.html
 Ensure ffmpeg is in PATH.
 
-@version 2.0
+@version 2.1
 """
 import argparse
 import re
@@ -13,9 +13,12 @@ import sys
 import time
 import contextlib
 
+from pathlib import Path
+
+import av
 from rich.console import Console
 
-console = Console()
+console = Console(color_system="truecolor")
 
 def find_idr_frames(video_file, target_frame, verbose: bool):
     """
@@ -138,8 +141,11 @@ def main():
     args = parser.parse_args()
     
     video_file = args.video_file
-    if not video_file.endswith(".h264") or not video_file.endswith(".avc"):
-        console.print(f"[yellow]Video file must be a raw h264 stream, h264 file headers may not be detected for:[/yellow] {video_file}")
+    av_file = av.open(Path(video_file))
+    if not av_file.format.name == "h264":
+        console.print(f"[yellow]Video file must be a raw h264 stream.[/yellow]")
+        console.print(f"[yellow]Detected file format:[/yellow] {av_file.format.name}")
+        return
         
     try:
         frame = int(args.frame)
@@ -156,6 +162,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
