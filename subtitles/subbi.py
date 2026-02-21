@@ -1,4 +1,5 @@
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -37,6 +38,10 @@ def get_subtitle_files(directory: str | Path, *extensions) -> list[Path]:
     return subtitle_files
 
 
+def remove_sdh_tags(text: str) -> str:
+    return re.sub(r"(?i)(?:\[sdh\]|\bsdh\b|\.sdh\b)", "", text)
+
+
 def convert_to_srt(directory: str | Path, persist: bool = False):
     """
     Convert all non-SRT files to SRT format in the given directory.
@@ -64,9 +69,15 @@ def convert_to_srt(directory: str | Path, persist: bool = False):
 
 
 def fix_common_issues(directory: str | Path):
-    """Run common issues fixer on all .srt files in the specified directory."""
+    """
+    Run common issues fixer on all .srt files in the specified directory.
+    A single file may be given as an argument instead of a directory.
+    """
     directory = Path(directory)
-    srt_files = get_subtitle_files(directory, "srt")
+    if directory.is_file():
+        srt_files = [directory]
+    else:
+        srt_files = get_subtitle_files(directory, "srt")
     for srt_file in srt_files:
         srt, status = common_issues_fixer.from_file(srt_file)
         fixed_srt_file = srt_file.with_name(srt_file.stem + "_fix" + srt_file.suffix)
@@ -78,12 +89,16 @@ def fix_common_issues(directory: str | Path):
 def strip_sdh(subtitle_file: str | Path):
     """Strip SDH lines/text with subby on a specific subtitle file."""
     subtitle_file = Path(subtitle_file)
-    subtitle_file_stripped = subtitle_file.with_name(subtitle_file.stem + "_stripped" + subtitle_file.suffix)
+    subtitle_file_name = subtitle_file.stem
+    stripped_file_name = remove_sdh_tags(subtitle_file_name)
+    if str(subtitle_file_name) == str(stripped_file_name):
+        stripped_file_name += "_stripped"
+    subtitle_file_stripped = subtitle_file.with_name(stripped_file_name + subtitle_file.suffix)
     srt = SubRipFile.from_string(subtitle_file.read_text(encoding='utf-8'))
     stripped, status = stripper.from_srt(srt)
     if status is True:
         stripped.save(subtitle_file_stripped)
-        print(f"Saved stripped file to {subtitle_file_stripped}")
+        fix_common_issues(subtitle_file_stripped)
 
 
 if __name__ == "__main__":
