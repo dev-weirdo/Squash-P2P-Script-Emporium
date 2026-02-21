@@ -138,7 +138,7 @@ def main():
     args = parser.parse_args()
     
     video_file = args.video_file
-    if not video_file.endswith(".h264") or video_file.endswith(".avc"):
+    if not video_file.endswith(".h264") or not video_file.endswith(".avc"):
         console.print(f"[yellow]Video file must be a raw h264 stream, h264 file headers may not be detected for:[/yellow] {video_file}")
         
     try:
@@ -156,5 +156,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
