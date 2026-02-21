@@ -1,6 +1,6 @@
 # Video Scripts
 <h2><a href="https://github.com/9Oc/Squash-P2P-Script-Emporium/blob/main/video/check_idr.py">check_idr</a>
-<a href="https://www.python.org/downloads/release/python-370/"><img src="https://img.shields.io/badge/Python-3.07%2B-brightgreen" alt="Python 3.07+"></a></h2>
+<a href="https://www.python.org/downloads/release/python-380/"><img src="https://img.shields.io/badge/Python-3.08%2B-brightgreen" alt="Python 3.07+"></a></h2>
 
 `check_idr.py` will determine if a given frame in an h264 raw stream is an IDR frame or not.
 
