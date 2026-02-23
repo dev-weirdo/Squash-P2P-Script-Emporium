@@ -56,9 +56,10 @@ def find_max_rgb_y_in_sup(sup_path: str | Path) -> int:
                     if entry.alpha > 0:  # check visible pixels only
                         # convert YCbCr to RGB
                         r, g, b = ycbcr_to_rgb_limited(entry.y, entry.cb, entry.cr)
-                        current_max = max(r, g, b)
-                        if current_max > max_rgb:
-                            max_rgb = current_max
+                        rgb = max(r, g, b)
+                        if rgb > max_rgb:
+                            max_rgb = rgb
+                        if entry.y > max_y:
                             max_y = entry.y
     
     return max_rgb, max_y
