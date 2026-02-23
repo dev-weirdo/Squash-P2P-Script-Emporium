@@ -128,7 +128,7 @@ Examples:
     
     args = parser.parse_args()
     
-    # validate input directory
+    # validate input directory(s)
     for input_dir in args.input_dirs:
         if not input_dir.is_dir():
             print(f"Error: Folder does not exist: {input_dir}")
@@ -183,14 +183,14 @@ Examples:
                     norm_factor = 235 / pgs.max_y
                 else:
                     norm_factor = 1.0
-                target_percent = (norm_factor * target_percent) / 100
+                target_percent = (norm_factor * args.percent) / 100
             elif args.rgb:
                 target_y = (args.rgb * 219 / 255) + 16
                 target_percent = calculate_target_percent(pgs.max_y, target_y)
             
             tonemapped_pgs = tonemap(pgs, target_percent)
             tonemapped_rgb, tonemapped_y = find_max_rgb_y_in_sup(tonemapped_pgs)
-            if (pgs.max_rgb != tonemapped_rgb):
+            if (pgs.max_y != tonemapped_y):
                 print(f"  ├── Y after tonemap: {tonemapped_y}")
                 print(f"  └── RGB after tonemap: {tonemapped_rgb}")
             
