@@ -51,7 +51,7 @@ class MegogoClient:
     async def _fetch(self, url: str) -> str:
         """Fetch a URL and return the response as text."""
         async with self.session.get(url) as resp:
-            try
+            try:
                 resp.raise_for_status()
                 return await resp.text(encoding="utf-8")
             except Exception as e:
