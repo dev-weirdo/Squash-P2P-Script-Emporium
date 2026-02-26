@@ -2,7 +2,7 @@
 // @name        Netflix Subtitle Downloader (Squash Mod)
 // @description Allows you to download subtitles from Netflix, modified for 1-click all subs download
 // @license     MIT
-// @version     1.7
+// @version     1.8
 // @namespace   nfsubdl-squash-mod
 // @include     https://www.netflix.com/*
 // @grant       unsafeWindow
@@ -184,36 +184,28 @@ const setBatchDelayText = () => {
 };
 
 const setBatch = b => {
-    if(b === null)
-        sessionStorage.removeItem('NSD_batch');
-    else
-        sessionStorage.setItem('NSD_batch', JSON.stringify(b));
+    if (b === null) sessionStorage.removeItem('NSD_batch');
+    else sessionStorage.setItem('NSD_batch', JSON.stringify(b));
 };
 
 const toggleEpTitleInFilename = () => {
     epTitleInFilename = !epTitleInFilename;
-    if(epTitleInFilename)
-        localStorage.setItem('NSD_ep-title-in-filename', epTitleInFilename);
-    else
-        localStorage.removeItem('NSD_ep-title-in-filename');
+    if (epTitleInFilename) localStorage.setItem('NSD_ep-title-in-filename', epTitleInFilename);
+    else localStorage.removeItem('NSD_ep-title-in-filename');
     setEpTitleInFilename();
 };
 const toggleForceLang = () => {
     forceSubs = !forceSubs;
-    if(forceSubs)
-        localStorage.removeItem('NSD_force-all-lang');
-    else
-        localStorage.setItem('NSD_force-all-lang', forceSubs);
+    if (forceSubs) localStorage.removeItem('NSD_force-all-lang');
+    else localStorage.setItem('NSD_force-all-lang', forceSubs);
     document.location.reload();
 };
 const setPreferredLocale = () => {
     const result = prompt('Netflix limited "force all subtitles" usage. Now you have to set a preferred locale to show subtitles for that language.\nPossible values (you can enter only one at a time!):\nar, cs, da, de, el, en, es, es-ES, fi, fr, he, hi, hr, hu, id, it, ja, ko, ms, nb, nl, pl, pt, pt-BR, ro, ru, sv, ta, te, th, tr, uk, vi, zh', prefLocale);
     if(result !== null) {
         prefLocale = result;
-        if(prefLocale === '')
-            localStorage.removeItem('NSD_pref-locale');
-        else
-            localStorage.setItem('NSD_pref-locale', prefLocale);
+        if(prefLocale === '') localStorage.removeItem('NSD_pref-locale');
+        else localStorage.setItem('NSD_pref-locale', prefLocale);
         document.location.reload();
     }
 };
@@ -221,10 +213,8 @@ const setLangToDownload = () => {
     const result = prompt('Languages to download, comma separated. Leave empty to download all subtitles.\nExample: en,de,fr', langs);
     if(result !== null) {
         langs = result;
-        if(langs === '')
-            localStorage.removeItem('NSD_lang-setting');
-        else
-            localStorage.setItem('NSD_lang-setting', langs);
+        if (langs === '') localStorage.removeItem('NSD_lang-setting');
+        else localStorage.setItem('NSD_lang-setting', langs);
         setLangsText();
     }
 };
@@ -241,15 +231,12 @@ const setSubFormat = () => {
 };
 const setBatchDelay = () => {
     let result = prompt('Delay (in seconds) between switching pages when downloading subs in batch:', batchDelay);
-    if(result !== null) {
+    if (result !== null) {
         result = parseFloat(result.replace(',', '.'));
-        if(result < 0 || !Number.isFinite(result))
-            result = 0;
+        if (result < 0 || !Number.isFinite(result)) result = 0;
         batchDelay = result;
-        if(batchDelay == 0)
-            localStorage.removeItem('NSD_batch-delay');
-        else
-            localStorage.setItem('NSD_batch-delay', batchDelay);
+        if (batchDelay == 0) localStorage.removeItem('NSD_batch-delay');
+        else localStorage.setItem('NSD_batch-delay', batchDelay);
         setBatchDelayText();
     }
 };
@@ -267,25 +254,24 @@ const processSubInfo = async result => {
     const subs = {};
     let reportError = true;
     for(const track of tracks) {
-        if(track.isNoneTrack)
-            continue;
+        if (track.isNoneTrack) continue;
 
         let type = SUB_TYPES[track.rawTrackType];
-        if(typeof type === 'undefined')
-            type = `[${track.rawTrackType}]`;
+        if (typeof type === 'undefined') type = `[${track.rawTrackType}]`;
+
         const variant = (typeof track.trackVariant === 'undefined' ? '' : `-${track.trackVariant}`);
         const lang = track.language + type + variant + (track.isForcedNarrative ? '-forced' : '');
 
         const formats = {};
-        for(let format of ALL_FORMATS) {
+        for (let format of ALL_FORMATS) {
             const downloadables = track.ttDownloadables[format];
-            if(typeof downloadables !== 'undefined') {
+            if (typeof downloadables !== 'undefined') {
                 let urls;
-                if(typeof downloadables.downloadUrls !== 'undefined')
+                if (typeof downloadables.downloadUrls !== 'undefined') {
                     urls = Object.values(downloadables.downloadUrls);
-                else if(typeof downloadables.urls !== 'undefined')
+                } else if (typeof downloadables.urls !== 'undefined') {
                     urls = downloadables.urls.map(({url}) => url);
-                else {
+                } else {
                     console.log('processSubInfo:', lang, Object.keys(downloadables));
                     if(reportError) {
                         reportError = false;
@@ -343,7 +329,7 @@ const processMetadata = data => {
         menu.querySelector('.batch-delay').addEventListener('click', setBatchDelay);
         menu.querySelector('.download-all-sequential')
             .addEventListener('click', () => {
-            // This wrapper ensures downloadAllSubsSequential is called on click
+            // add downloadAllSubsSequential to be called on click
             downloadAllSubsSequential();
         });
         setEpTitleInFilename();
@@ -365,10 +351,10 @@ const processMetadata = data => {
         const allEpisodes = [];
         let currentSeason = 0;
         menu.classList.add('series');
-        for(const season of result.seasons) {
-            for(const episode of season.episodes) {
-                if(episode.id === result.currentEpisode)
-                    currentSeason = season.seq;
+        for (const season of result.seasons) {
+            for (const episode of season.episodes) {
+                if (episode.id === result.currentEpisode) currentSeason = season.seq;
+
                 allEpisodes.push([season.seq, episode.seq, episode.id]);
                 titleCache[episode.id] = {
                     type, title,
@@ -382,20 +368,15 @@ const processMetadata = data => {
 
         allEpisodes.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
         let toEnd = false;
-        for(const [season, episode, id] of allEpisodes) {
+        for (const [season, episode, id] of allEpisodes) {
             batchAll.push(id);
-            if(season === currentSeason)
-                batchSeason.push(id);
-            if(id === result.currentEpisode)
-                toEnd = true;
-            if(toEnd)
-                batchToEnd.push(id);
+            if (season === currentSeason) batchSeason.push(id);
+            if (id === result.currentEpisode) toEnd = true;
+            if (toEnd) batchToEnd.push(id);
         }
-    }
-    else if(type === 'movie' || type === 'supplemental') {
+    } else if (type === 'movie' || type === 'supplemental') {
         titleCache[result.id] = {type, title};
-    }
-    else {
+    } else {
         console.debug('[Netflix Subtitle Downloader] unknown video type:', type, result)
         return;
     }
@@ -406,23 +387,19 @@ const getVideoId = () => window.location.pathname.split('/').pop();
 
 const getXFromCache = (cache, name, silent) => {
     const id = getVideoId();
-    if(cache.hasOwnProperty(id))
-        return cache[id];
+    if (cache.hasOwnProperty(id)) return cache[id];
 
     let newID = undefined;
     try {
         newID = unsafeWindow.netflix.falcorCache.videos[id].current.value[1];
-    }
-    catch(ignore) {}
-    if(typeof newID !== 'undefined' && cache.hasOwnProperty(newID))
-        return cache[newID];
+    } catch(ignore) {}
+
+    if (typeof newID !== 'undefined' && cache.hasOwnProperty(newID)) return cache[newID];
 
     newID = idOverrides[id];
-    if(typeof newID !== 'undefined' && cache.hasOwnProperty(newID))
-        return cache[newID];
+    if (typeof newID !== 'undefined' && cache.hasOwnProperty(newID)) return cache[newID];
 
-    if(silent === true)
-        return null;
+    if (silent === true) return null;
 
     alert("Couldn't find the " + name + ". Wait until the player is loaded. If that doesn't help refresh the page.");
     throw '';
@@ -437,16 +414,14 @@ const safeTitle = title => title.trim().replace(/[:*?"<>|\\\/]+/g, '_').replace(
 const getTitleFromCache = () => {
     const title = getXFromCache(titleCache, 'title');
     const titleParts = [title.title];
-    if(title.type === 'show') {
+    if (title.type === 'show') {
         const season = pad(title.season, 'S');
-        if(title.hiddenNumber) {
+        if (title.hiddenNumber) {
             titleParts.push(season);
             titleParts.push(title.subtitle);
-        }
-        else {
+        } else {
             titleParts.push(season + pad(title.episode, 'E'));
-            if(epTitleInFilename)
-                titleParts.push(title.subtitle);
+            if (epTitleInFilename) titleParts.push(title.subtitle);
         }
     }
     return [safeTitle(titleParts.join('.')), safeTitle(title.title)];
@@ -455,9 +430,8 @@ const getTitleFromCache = () => {
 const pickFormat = formats => {
     const preferred = (subFormat === DFXP ? ALL_FORMATS : ALL_FORMATS);
 
-    for(let format of preferred) {
-        if(typeof formats[format] !== 'undefined')
-            return formats[format];
+    for (let format of preferred) {
+        if (typeof formats[format] !== 'undefined') return formats[format];
     }
 };
 
@@ -473,9 +447,9 @@ const _download = async _zip => {
     const downloaded = [];
 
     let filteredLangs;
-    if(langs === '')
+    if (langs === '') {
         filteredLangs = Object.keys(subs);
-    else {
+    } else {
         const regularExpression = new RegExp(
             '^(' + langs
             .replace(/\[/g, '\\[')
@@ -486,43 +460,39 @@ const _download = async _zip => {
             + ')'
         );
         filteredLangs = [];
-        for(const lang of Object.keys(subs)) {
-            if(lang.match(regularExpression))
-                filteredLangs.push(lang);
+        for (const lang of Object.keys(subs)) {
+            if (lang.match(regularExpression)) filteredLangs.push(lang);
         }
     }
 
     const progress = new ProgressBar(filteredLangs.length);
     let stop = false;
-    for(const lang of filteredLangs) {
+    for (const lang of filteredLangs) {
         const [urls, extension] = pickFormat(subs[lang]);
-        while(urls.length > 0) {
+        while (urls.length > 0) {
             let url = popRandomElement(urls);
             const resultPromise = fetch(url, {mode: "cors"});
             let result;
             try {
                 // Promise.any isn't supported in all browsers, use Promise.race instead
                 result = await Promise.race([resultPromise, progress.stop, asyncSleep(30, STOP_THE_DOWNLOAD)]);
-            }
-            catch(e) {
+            } catch(e) {
                 // the only promise that can be rejected is the one from fetch
                 // if that happens we want to stop the download anyway
                 result = STOP_THE_DOWNLOAD;
             }
-            if(result === STOP_THE_DOWNLOAD) {
+            if (result === STOP_THE_DOWNLOAD) {
                 stop = true;
                 break;
             }
             progress.increment();
             const data = await result.text();
-            if(data.length > 0) {
+            if (data.length > 0) {
                 downloaded.push({lang, data, extension});
                 break;
             }
         }
-        if (stop) {
-            break;
-        }
+        if (stop) break;
     }
     let year = getReleaseYear()
 
@@ -531,8 +501,7 @@ const _download = async _zip => {
         _zip.file(`${title}.${year}.NF.WEB.${lang}.${extension}`, data);
     });
     await cleanAndRenameZipFiles(_zip, LANG_MAP);
-    if(await Promise.race([progress.stop, {}]) === STOP_THE_DOWNLOAD)
-        stop = true;
+    if (await Promise.race([progress.stop, {}]) === STOP_THE_DOWNLOAD) stop = true;
     progress.destroy();
 
     return [seriesTitle, stop];
@@ -563,26 +532,22 @@ const readAsBinaryString = blob => new Promise(resolve => {
 const downloadBatch = async auto => {
     const cache = await caches.open('NSD');
     let zip, title, stop;
-    if(auto === true) {
+    if (auto === true) {
         try {
             const response = await cache.match('/subs.zip');
             const blob = await response.blob();
             zip = await JSZip.loadAsync(await readAsBinaryString(blob));
-        }
-        catch(error) {
+        } catch (error) {
             console.error(error);
             alert('An error occured when loading the zip file with subs from the cache. More info in the browser console.');
             await cleanBatch();
             return;
         }
-    }
-    else
-        zip = new JSZip();
+    } else zip = new JSZip();
 
     try {
         [title, stop] = await _download(zip);
-    }
-    catch(error) {
+    } catch(error) {
         title = 'unknown';
         stop = true;
     }
@@ -590,11 +555,10 @@ const downloadBatch = async auto => {
     const id = parseInt(getVideoId());
     batch = batch.filter(x => x !== id);
 
-    if(stop || batch.length == 0) {
+    if (stop || batch.length == 0) {
         await _save(zip, title);
         await cleanBatch();
-    }
-    else {
+    } else {
         setBatch(batch);
         cache.put('/subs.zip', new Response(await zip.generateAsync({type:'blob'})));
         await asyncSleep(batchDelay);
@@ -626,13 +590,9 @@ async function waitUntil(condition, timeoutMs, intervalMs = 5) {
 
     while (true) {
         const value = await condition();
-        if (value) {
-            return value;
-        }
+        if (value) return value;
 
-        if (Date.now() - start >= timeoutMs) {
-            return null;
-        }
+        if (Date.now() - start >= timeoutMs) return null;
 
         await sleep(intervalMs);
     }
@@ -646,34 +606,34 @@ function getReleaseYear() {
     const videoId = Object.keys(videoMetadata)[0];
     const metaWrapper = videoMetadata[videoId];
 
-    // In the userscript, _metadataObject is a direct property of metaWrapper
+    // _metadataObject is a direct property of metaWrapper
     const year = metaWrapper?._metadataObject?.video?.year ?? null;
 
     console.log("Detected year:", year);
     return year;
 }
 
-function waitForSubtitleRequestOnce(timeoutMs = 4000) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            window.removeEventListener('netflix_sub_downloader_xhr_complete', handler);
-            reject(new Error('subtitle xhr timeout'));
-        }, timeoutMs);
+// function waitForSubtitleRequestOnce(timeoutMs = 4000) {
+//     return new Promise((resolve, reject) => {
+//         const timer = setTimeout(() => {
+//             window.removeEventListener('netflix_sub_downloader_xhr_complete', handler);
+//             reject(new Error('subtitle xhr timeout'));
+//         }, timeoutMs);
 
-        function handler(e) {
-            clearTimeout(timer);
-            window.removeEventListener('netflix_sub_downloader_xhr_complete', handler);
-            resolve(e.detail?.url || e.detail);
-        }
-        window.addEventListener('netflix_sub_downloader_xhr_complete', handler);
-    });
-}
+//         function handler(e) {
+//             clearTimeout(timer);
+//             window.removeEventListener('netflix_sub_downloader_xhr_complete', handler);
+//             resolve(e.detail?.url || e.detail);
+//         }
+//         window.addEventListener('netflix_sub_downloader_xhr_complete', handler);
+//     });
+// }
 
 ['mouseleave','mouseout','blur','focusout'].forEach(evt=>{
     document.addEventListener(evt,e=>{
         const menu = e.target.closest && e.target.closest('.player-timedtext,[data-uia="player-settings-submenu"]');
-        if(menu){ e.stopImmediatePropagation(); e.stopPropagation(); e.preventDefault(); }
-    },true);
+        if (menu) e.stopImmediatePropagation(); e.stopPropagation(); e.preventDefault();
+    }, true);
 });
 
 const subtitleUrlQueue = [];
@@ -738,9 +698,7 @@ async function cleanAndRenameZipFiles(zip, langMap) {
         langTag = langTag.replace("-forced", "[forced]");
 
         // only rename lang tag if it exists in the map
-        if (langMap.hasOwnProperty(langTag)) {
-            langTag = langMap[langTag];
-        }
+        if (langMap.hasOwnProperty(langTag)) langTag = langMap[langTag];
 
 
         const newName = `${base}.${langTag}.${ext}`;
@@ -778,9 +736,8 @@ function simulateMouseMovement() {
 async function keepMenuOpen() {
     let btn = document.querySelector(BUTTON_SELECTOR);
     let menu = document.querySelector(MENU_SELECTOR);
-    if (!menu) {
-        simulateMouseMovement();
-    }
+    if (!menu) simulateMouseMovement();
+
     btn = document.querySelector(BUTTON_SELECTOR);
     menu = document.querySelector(MENU_SELECTOR);
     if (btn && !menu) {
@@ -822,9 +779,7 @@ function parseLangAndSDHFromSubtitle(text) {
     const isSDH = /textType="CC"/i.test(text);
 
     // WebVTT header fallback
-    if (!lang) {
-        m = text.match(/^Language:\s*([^\r\n]+)/mi);
-    }
+    if (!lang) m = text.match(/^Language:\s*([^\r\n]+)/mi);
 
     return {
         lang: (lang || (m ? m[1].trim() : 'und')),
@@ -842,112 +797,112 @@ function ensureUniqueFilename(zip, base, ext) {
     return name;
 }
 
-async function runWithConcurrencyLimit(limit=Infinity, tasks, sequential=false, delayMs=0) {
-    const results = [];
+// async function runWithConcurrencyLimit(limit=Infinity, tasks, sequential=false, delayMs=0) {
+//     const results = [];
 
-    if (sequential) {
-        for (let i = 0; i < tasks.length; i++) {
-            if (i > 0 && delayMs > 0) {
-                await sleep(delayMs);
-            }
-            results[i] = await tasks[i]();
-        }
-        return results;
-    }
+//     if (sequential) {
+//         for (let i = 0; i < tasks.length; i++) {
+//             if (i > 0 && delayMs > 0) {
+//                 await sleep(delayMs);
+//             }
+//             results[i] = await tasks[i]();
+//         }
+//         return results;
+//     }
 
-    let idx = 0;
+//     let idx = 0;
 
-    const worker = async () => {
-        while (idx < tasks.length) {
-            const myIdx = idx++;
-            results[myIdx] = await tasks[myIdx]();
-        }
-    };
+//     const worker = async () => {
+//         while (idx < tasks.length) {
+//             const myIdx = idx++;
+//             results[myIdx] = await tasks[myIdx]();
+//         }
+//     };
 
-    const workers = Array(Math.min(limit, tasks.length)).fill(0).map(() => worker());
-    await Promise.all(workers);
-    return results;
-}
+//     const workers = Array(Math.min(limit, tasks.length)).fill(0).map(() => worker());
+//     await Promise.all(workers);
+//     return results;
+// }
 
-function pushSubtitleUrl(url) {
-    if (typeof url !== 'string') return;
-    if (subtitleUrlSeen.has(url)) return;
-    subtitleUrlSeen.add(url);
+// function pushSubtitleUrl(url) {
+//     if (typeof url !== 'string') return;
+//     if (subtitleUrlSeen.has(url)) return;
+//     subtitleUrlSeen.add(url);
 
-    if (subtitleUrlWaiters.length) {
-        const resolver = subtitleUrlWaiters.shift();
-        resolver(url);
-    } else {
-        subtitleUrlQueue.push(url);
-    }
-}
+//     if (subtitleUrlWaiters.length) {
+//         const resolver = subtitleUrlWaiters.shift();
+//         resolver(url);
+//     } else {
+//         subtitleUrlQueue.push(url);
+//     }
+// }
 
 // consume one URL, or wait up to timeoutMs if queue is empty
-function takeSubtitleUrl(timeoutMs = 10000) {
-    return new Promise((resolve, reject) => {
-        if (subtitleUrlQueue.length) {
-            return resolve(subtitleUrlQueue.shift());
-        }
-        const timer = setTimeout(() => {
-            const idx = subtitleUrlWaiters.indexOf(resolver);
-            if (idx >= 0) subtitleUrlWaiters.splice(idx, 1);
-            reject(new Error('subtitle xhr timeout'));
-        }, timeoutMs);
+// function takeSubtitleUrl(timeoutMs = 10000) {
+//     return new Promise((resolve, reject) => {
+//         if (subtitleUrlQueue.length) {
+//             return resolve(subtitleUrlQueue.shift());
+//         }
+//         const timer = setTimeout(() => {
+//             const idx = subtitleUrlWaiters.indexOf(resolver);
+//             if (idx >= 0) subtitleUrlWaiters.splice(idx, 1);
+//             reject(new Error('subtitle xhr timeout'));
+//         }, timeoutMs);
 
-        const resolver = (url) => {
-            clearTimeout(timer);
-            resolve(url);
-        };
-        subtitleUrlWaiters.push(resolver);
-    });
-}
+//         const resolver = (url) => {
+//             clearTimeout(timer);
+//             resolve(url);
+//         };
+//         subtitleUrlWaiters.push(resolver);
+//     });
+// }
 
 // fetch subtitle text as soon as we capture a URL to prevent a url from expiring
-const subtitlePrefetchCache = new Map(); // url -> { text, lang, sdh }
-const subtitlePrefetchInFlight = new Map(); // url -> promise
+// const subtitlePrefetchCache = new Map(); // url -> { text, lang, sdh }
+// const subtitlePrefetchInFlight = new Map(); // url -> promise
 
-async function prefetchSubtitleUrl(url) {
-    if (typeof url !== 'string') return;
-    if (subtitlePrefetchCache.has(url) || subtitlePrefetchInFlight.has(url)) return;
+// async function prefetchSubtitleUrl(url) {
+//     if (typeof url !== 'string') return;
+//     if (subtitlePrefetchCache.has(url) || subtitlePrefetchInFlight.has(url)) return;
 
-    const p = (async () => {
-        try {
-            const res = await fetch(url, { mode: "cors" });
-            if (!res || !res.ok) throw new Error(res ? res.status : "no response");
-            const text = await res.text();
-            if (!text) return;
-            const parsed = parseLangAndSDHFromSubtitle(text);
-            subtitlePrefetchCache.set(url, { text, lang: parsed.lang, sdh: parsed.sdh });
-        } catch (e) {
-            console.warn("Prefetch failed for subtitle URL", url, e);
-        } finally {
-            subtitlePrefetchInFlight.delete(url);
-        }
-    })();
+//     const p = (async () => {
+//         try {
+//             const res = await fetch(url, { mode: "cors" });
+//             if (!res || !res.ok) throw new Error(res ? res.status : "no response");
+//             const text = await res.text();
+//             if (!text) return;
+//             const parsed = parseLangAndSDHFromSubtitle(text);
+//             subtitlePrefetchCache.set(url, { text, lang: parsed.lang, sdh: parsed.sdh });
+//         } catch (e) {
+//             console.warn("Prefetch failed for subtitle URL", url, e);
+//         } finally {
+//             subtitlePrefetchInFlight.delete(url);
+//         }
+//     })();
 
-    subtitlePrefetchInFlight.set(url, p);
-    return p;
-}
+//     subtitlePrefetchInFlight.set(url, p);
+//     return p;
+// }
 
 const isWatchPage = () => location.pathname.startsWith('/watch/');
 
 // capture XHR request urls
-window.addEventListener('netflix_sub_downloader_xhr_complete', (e) => {
-    if (!isWatchPage()) return; // ignore captures when browsing
-    const url = e.detail?.url || e.detail;
-    pushSubtitleUrl(url);
-    prefetchSubtitleUrl(url);
-}, true);
+// window.addEventListener('netflix_sub_downloader_xhr_complete', (e) => {
+//     if (!isWatchPage()) return; // ignore captures when browsing
+//     const url = e.detail?.url || e.detail;
+//     pushSubtitleUrl(url);
+//     prefetchSubtitleUrl(url);
+// }, true);
 
-// reset queues/caches on navigation away from watch pages
-window.addEventListener('popstate', () => {
-    if (!isWatchPage()) {
-        subtitleUrlQueue.length = 0;
-        subtitleUrlSeen.clear();
-        subtitlePrefetchCache.clear();
-        subtitlePrefetchInFlight.clear();
-    }
-});
+// // reset queues/caches on navigation away from watch pages
+// window.addEventListener('popstate', () => {
+//     if (!isWatchPage()) {
+//         subtitleUrlQueue.length = 0;
+//         subtitleUrlSeen.clear();
+//         subtitlePrefetchCache.clear();
+//         subtitlePrefetchInFlight.clear();
+//     }
+// });
 
 // Helper near your other helpers
 function isVideoReady() {
@@ -966,9 +921,7 @@ function isVideoReady() {
 
 function pauseVideoIfPlaying() {
     const videoEl = document.querySelector('video');
-    if (videoEl && !videoEl.paused) {
-        videoEl.pause();
-    }
+    if (videoEl && !videoEl.paused) videoEl.pause();
 }
 
 const tagged = (promise, tag) =>
@@ -1030,156 +983,63 @@ const downloadAllSubsSequential = async () => {
     progress.updateMax(allItems.length)
     console.log(`Found ${allItems.length} subtitles to load`);
 
-    const urlSet = new Set();
     let stopRequested = false;
 
-    //capture subtitle URLs
+    // main download loop
     for (let i = 0; i < allItems.length; i++) {
         progress.updateLabel(`Downloading subtitle ${i+1}/${allItems.length}`)
         const item = allItems[i];
         await waitForSubtitleMenu(2000);
         item.click();
 
-        const races = [
-            tagged(takeSubtitleUrl(15000), 'url'),
-            tagged(progress.stop, 'stop'),
-            tagged(asyncSleep(i === 0 ? 0.5 : 15), 'sleep'),
-        ];
+        const pollIntervalMs = 50; // adjust as needed
+        const maxAttempts = 200; // 200 * 50ms = 15s max wait
+        let attempts = 0;
+        let subs = getSubsFromCache(true);
+        let foundLang = null;
+        while (attempts++ < maxAttempts) {
+            // yield to the event loop, allow cache/menu updates to happen
+            await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+            subs = getSubsFromCache(true);
+            const availableLangs = Object.keys(subs).filter(lang =>
+                                                            !(/forced|stripped|dubtitle/i.test(lang))
+                                                           );
 
-        let result;
-        try {
-            result = await Promise.race(races);
-        } catch (e) {
-            result = { tag: 'error', error: e };
-        }
+            // if any available language is not already in the zip, we found a new subtitle
+            // and can break out of the loop
+            foundLang = availableLangs.find(lang => {
+                const fname = `${title}.${year}.NF.WEB.${lang}.vtt`;
+                if (!_zip.file(fname)) return lang;
+                return null;
+            });
 
-        if (result?.value === STOP_THE_DOWNLOAD) {
-            stopRequested = true;
-            console.log("User requested stop. Saving current ZIP…");
-            break;
-        }
-        let newSubs = getSubsFromCache(true);
-        allLangs = Object.keys(newSubs).filter(lang =>
-                                            !(/forced|stripped|dubtitle/i.test(lang))
-                                           );
-        for (const lang of allLangs) {
-            // Skip if already downloaded
-            if (_zip.file(`${title}.${year}.NF.WEB.${lang}.vtt`)) {
-                continue;
+            if (foundLang != null) {
+                break;
             }
-
-            const [urls, extension] = pickFormat(newSubs[lang]);
+        }
+        if (foundLang != null) {
+            const [urls, extension] = pickFormat(subs[foundLang]);
             for (const url of urls) {
                 try {
                     const result = await fetch(url, {mode: "cors"});
                     const data = await result.text();
                     if (data.length > 0) {
-                        _zip.file(`${title}.${year}.NF.WEB.${lang}.${extension}`, data);
+                        _zip.file(`${title}.${year}.NF.WEB.${foundLang}.${extension}`, data);
                         break;
                     }
                 } catch (e) {
-                    console.error("Failed to fetch subtitle", lang, e);
+                    console.error("Failed to fetch subtitle", foundLang, e);
                 }
             }
+            progress.increment();
+            if (batchDelay > 0) {
+                progress.updateLabel(`Sleeping for ${batchDelay} seconds...`);
+                await sleep(batchDelay * 1000);
+            }
         }
-        progress.increment();
-        if (batchDelay > 0) {
-            progress.updateLabel(`Sleeping for ${batchDelay} seconds...`);
-            await sleep(batchDelay * 1000);
-        }
-
-        //         if (result?.tag === 'url' && typeof result.value === 'string') {
-        //             urlSet.add(result.value);
-        //         } else {
-        //             console.warn('No URL captured for item:', item.textContent.trim());
-        //         }
-
-        //         progress.increment();
-        //         if (batchDelay > 0) {
-        //             progress.updateLabel(`Sleeping for ${batchDelay} seconds...`);
-        //             await sleep(batchDelay * 1000);
-        //         }
     }
 
     clearInterval(intervalId);
-    if (stopRequested) {
-        progress.updateLabel(`Cleaning up subtitle filenames...`);
-        await cleanAndRenameZipFiles(_zip, LANG_MAP);
-        progress.updateLabel(`Saving zip...`);
-        _save(_zip, seriesTitle.replace("_", ""));
-        progress.destroy();
-        return;
-    }
-
-    const urls = Array.from(urlSet);
-    progress.current = 0;
-    progress.max = urls.length;
-    progress.updateLabel(`Downloading ${urls.length} subtitle files…`);
-
-    //     if (stopRequested || urls.length === 0) {
-    //         progress.updateLabel(`Cleaning up subtitle filenames...`);
-    //         await cleanAndRenameZipFiles(_zip, LANG_MAP);
-    //         progress.updateLabel(`Saving zip...`);
-    //         _save(_zip, seriesTitle.replace("_", ""));
-    //         progress.destroy();
-    //         return;
-    //     }
-
-    //     const downloadTasks = urls.map(url => async () => {
-    //         if (stopRequested) return;
-
-    //         try {
-    //             let cached = subtitlePrefetchCache.get(url);
-    //             let text = cached?.text;
-    //             let lang = cached?.lang;
-    //             let sdh = cached?.sdh;
-
-    //             if (!text) {
-    //                 const responseOrStop = await Promise.race([
-    //                     fetch(url, { mode: "cors" }),
-    //                     progress.stop
-    //                 ]);
-
-    //                 if (responseOrStop === STOP_THE_DOWNLOAD) {
-    //                     stopRequested = true;
-    //                     return;
-    //                 }
-
-    //                 const res = responseOrStop;
-    //                 if (!res || !res.ok) throw new Error(res ? res.status : 'no response');
-    //                 text = await res.text();
-    //                 if (!text || !text.length) return;
-
-    //                 const parsed = parseLangAndSDHFromSubtitle(text);
-    //                 lang = parsed.lang;
-    //                 sdh = parsed.sdh;
-    //                 // cache it for any later reuse
-    //                 subtitlePrefetchCache.set(url, { text, lang, sdh });
-    //             }
-
-    //             const langTag = sdh ? `${lang}[sdh]` : lang;
-    //             const ext = 'ttml'; // nf subs from XHR are in TTML format
-    //             const base = `${title}.${year}.NF.WEB.${langTag}`;
-    //             const filename = ensureUniqueFilename(_zip, base, ext);
-    //             _zip.file(filename, text);
-    //         } catch (e) {
-    //             console.error('Failed to fetch subtitle', url, e);
-    //         } finally {
-    //             progress.increment();
-    //         }
-    //     });
-
-    //     let concurrencyLimit = Infinity;
-    //     let sequential = false;
-    //     let delay = 0;
-
-    //     if (batchDelay > 0) {
-    //         sequential = true;
-    //         delay = batchDelay;
-    //     }
-
-    //     await runWithConcurrencyLimit(concurrencyLimit, downloadTasks, sequential, delay);
-
     progress.updateLabel(`Cleaning up subtitle filenames...`);
     await cleanAndRenameZipFiles(_zip, LANG_MAP);
     progress.updateLabel(`Saving zip...`);
@@ -1189,12 +1049,9 @@ const downloadAllSubsSequential = async () => {
 
 const processMessage = e => {
     const {type, data} = e.detail;
-    if(type === 'subs')
-        processSubInfo(data);
-    else if(type === 'id_override')
-        idOverrides[data[0]] = data[1];
-    else if(type === 'metadata')
-        processMetadata(data);
+    if (type === 'subs') processSubInfo(data);
+    else if (type === 'id_override') idOverrides[data[0]] = data[1];
+    else if (type === 'metadata') processMetadata(data);
 }
 
 const injection = (ALL_FORMATS) => {
@@ -1237,24 +1094,21 @@ const injection = (ALL_FORMATS) => {
                                 }
                             }
                         }
-                        if (v.showAllSubDubTracks != null && forceSubs)
-                            v.showAllSubDubTracks = true;
-                        if (prefLocale !== '')
-                            v.preferredTextLocale = prefLocale;
+                        if (v.showAllSubDubTracks != null && forceSubs) v.showAllSubDubTracks = true;
+                        if (prefLocale !== '') v.preferredTextLocale = prefLocale;
                     }
                     catch (e) {
-                        if (e instanceof TypeError)
-                            continue;
-                        else
-                            throw e;
+                        if (e instanceof TypeError) continue;
+                        else throw e;
                     }
                 }
             }
-            if(data && typeof data.movieId === 'number') {
+            if (data && typeof data.movieId === 'number') {
                 try {
                     let videoId = data.params.sessionParams.uiplaycontext.video_id;
-                    if(typeof videoId === 'number' && videoId !== data.movieId)
+                    if (typeof videoId === 'number' && videoId !== data.movieId) {
                         window.dispatchEvent(new CustomEvent('netflix_sub_downloader_data', {detail: {type: 'id_override', data: [videoId, data.movieId]}}));
+                    }
                 }
                 catch(ignore) {}
             }
@@ -1262,21 +1116,23 @@ const injection = (ALL_FORMATS) => {
         };
 
         XMLHttpRequest.prototype.open = function() {
-            if(arguments[1] && arguments[1].includes('/metadata?'))
+            if (arguments[1] && arguments[1].includes('/metadata?')) {
                 this.addEventListener('load', async () => {
                     let data = this.response;
-                    if(data instanceof Blob)
+                    if(data instanceof Blob) {
                         data = JSON.parse(await data.text());
-                    else if(typeof data === "string")
+                    } else if (typeof data === "string") {
                         data = JSON.parse(data);
+                    }
                     window.dispatchEvent(new CustomEvent('netflix_sub_downloader_data', {detail: {type: 'metadata', data: data}}));
                 }, false);
+            }
             open.apply(this, arguments);
         };
 
         window.fetch = async (...args) => {
             const response = realFetch(...args);
-            if(args[0] && args[0].includes('/metadata?')) {
+            if (args[0] && args[0].includes('/metadata?')) {
                 const copied = (await response).clone();
                 const data = await copied.json();
                 window.dispatchEvent(new CustomEvent('netflix_sub_downloader_data', {detail: {type: 'metadata', data: data}}));
@@ -1285,33 +1141,33 @@ const injection = (ALL_FORMATS) => {
         };
     })(JSON.parse, JSON.stringify, XMLHttpRequest.prototype.open, window.fetch);
 
-    (() => {
-        const origSend = XMLHttpRequest.prototype.send;
-        const origOpen = XMLHttpRequest.prototype.open;
+    //     (() => {
+    //         const origSend = XMLHttpRequest.prototype.send;
+    //         const origOpen = XMLHttpRequest.prototype.open;
 
-        // Capture URL (does not interfere with the current open override)
-        XMLHttpRequest.prototype.open = function(method, url) {
-            this._targetUrl = url;
-            return origOpen.apply(this, arguments);
-        };
+    //         // Capture URL (does not interfere with the current open override)
+    //         XMLHttpRequest.prototype.open = function(method, url) {
+    //             this._targetUrl = url;
+    //             return origOpen.apply(this, arguments);
+    //         };
 
-        // Fire event when request completes
-        XMLHttpRequest.prototype.send = function() {
-            this.addEventListener('load', () => {
-                try {
-                    if (this._targetUrl && this._targetUrl.includes("nflxvideo.net/?o")) {
-                        window.dispatchEvent(new CustomEvent(
-                            'netflix_sub_downloader_xhr_complete',
-                            { detail: { url: this._targetUrl } }
-                        ));
-                        console.log("Netflix request completed:", this._targetUrl);
-                    }
-                } catch (e) {}
-            });
+    //         // Fire event when request completes
+    //         XMLHttpRequest.prototype.send = function() {
+    //             this.addEventListener('load', () => {
+    //                 try {
+    //                     if (this._targetUrl && this._targetUrl.includes("nflxvideo.net/?o")) {
+    //                         window.dispatchEvent(new CustomEvent(
+    //                             'netflix_sub_downloader_xhr_complete',
+    //                             { detail: { url: this._targetUrl } }
+    //                         ));
+    //                         console.log("Netflix request completed:", this._targetUrl);
+    //                     }
+    //                 } catch (e) {}
+    //             });
 
-            return origSend.apply(this, arguments);
-        };
-    })();
+    //             return origSend.apply(this, arguments);
+    //         };
+    //     })();
 }
 
 window.addEventListener('netflix_sub_downloader_data', processMessage, false);
