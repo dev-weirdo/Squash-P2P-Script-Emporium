@@ -19,10 +19,13 @@ import aiohttp
 from bs4 import BeautifulSoup
 from rich.console import Console
 from rich.markup import escape
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from subby import CommonIssuesFixer, SAMIConverter, SDHStripper, SMPTEConverter, WebVTTConverter
 
 # output directory for downloaded subtitles
 OUTPUT_DIR = r"E:\WEB-DL-Subtitles"
+
+NUMBERED_SUFFIX = re.compile(r'^(.*?)-(\d{1,2})(\.[^.]+)?$', re.IGNORECASE)
 
 console = Console(color_system="truecolor")
 common_issues_fixer = CommonIssuesFixer()
@@ -73,27 +76,16 @@ class MegogoClient:
             return year_tag.get_text(strip=True)
         return None
 
-    async def _download_subtitle(self, subtitle: dict, year: str, content_title: str) -> Path:
-        subtitle_language = subtitle.get("lang_iso_639_1")
-        subtitle_type = subtitle.get("display_name").lower()
-        if "forced" in subtitle_type or "auto" in subtitle_type:
-            subtitle_type = "[forced]"
-        elif "sdh" in subtitle_type:
-            subtitle_type = "[sdh]"
-        else:
-            subtitle_type = ""
-
-        console.print(
-            f"[green][MEGOGO CLIENT][/green] Downloading subtitle: "
-            f"[dodger_blue1]{subtitle_language}[/dodger_blue1] "
-            f"[dodger_blue1]{escape(subtitle_type)}[/dodger_blue1]"
-        )
+    async def _download_subtitle(self, subtitle: dict) -> Path:
+        filename = subtitle.get("filename")
+        content_title = subtitle.get("content_title")
+        content_year = subtitle.get("content_year")
         subtitle_text = await self._fetch(subtitle.get("url"))
         if subtitle_text is None:
             return None
+
         subtitle_text = subtitle_text.replace("\r\n", "\n")
-        filename = f"{sanitize_filename(content_title)}.{year}.MEGOGO.WEB.{subtitle_language}{subtitle_type}.srt"
-        folder_name = f"{sanitize_filename(content_title, folder=True)} ({year})"
+        folder_name = f"{sanitize_filename(content_title, folder=True)} ({content_year})"
         movie_folder = self.output_dir / folder_name / "Megogo"
         movie_folder.mkdir(parents=True, exist_ok=True)
         filepath = movie_folder / filename
@@ -131,30 +123,71 @@ class MegogoClient:
             console.print(f"[red]Error fetching API data:[/red] {e}")
             return []
 
-        # extract subtitles, content title, and content year from API response
+        # extract subtitles and content title from API response
         video_json = api_json["data"]["widgets"]["videoEmbed_v3"]["json"]
         subtitles = video_json.get("subtitles", [])
         if not subtitles:
             console.print("[yellow][MEGOGO CLIENT][/yellow] No subtitles available for download")
             return []
-
         title = video_json.get("title", video_id)
         console.print(
             f"[green][MEGOGO CLIENT][/green] Title: [sea_green2]{title}[/sea_green2] ([dodger_blue1]{year}[/dodger_blue1])"
         )
         console.print(f"[green][MEGOGO CLIENT][/green] Found [orange1]{len(subtitles)}[/orange1] subtitle(s)")
-
-        subtitle_tasks = [self._download_subtitle(subtitle, year, title) for subtitle in subtitles]
-        with console.status(
-            f"[green][MEGOGO CLIENT][/green] Downloading [orange1]{len(subtitle_tasks)}[/orange1] subtitle(s)",
-            spinner="dots",
-            spinner_style="white",
-            speed=0.9,
-        ):
-            results = await asyncio.gather(*subtitle_tasks)
-
+        
+        subs = []
+        used_filenames = set()
+        for subtitle in subtitles:
+            subtitle_language = subtitle.get("lang_iso_639_1")
+            if subtitle_language == "en":
+                subtitle_language = "en-US"
+            subtitle_type = subtitle.get("display_name").lower()
+            if any(s in subtitle_type for s in ("forced","auto","авто")):
+                subtitle_type = "[forced]"
+            elif "sdh" in subtitle_type:
+                subtitle_type = "[sdh]"
+            else:
+                subtitle_type = ""
+            subtitle_url = subtitle.get("url")
+            filename = f"{sanitize_filename(title)}.{year}.MEGOGO.WEB.{subtitle_language}{subtitle_type}.srt"
+            filename = get_unique_filename(filename, used_filenames)
+            subs.append({
+                "language": subtitle_language,
+                "type": subtitle_type,
+                "url": subtitle_url,
+                "filename": filename,
+                "content_title": title,
+                "content_year": year
+            })
+        results = []
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task(
+                "[green][MEGOGO CLIENT][/green] Downloading subtitles", total=len(subs)
+            )
+            subtitle_tasks = [asyncio.create_task(self._download_subtitle(subtitle)) for subtitle in subs]
+            for i, finished in enumerate(asyncio.as_completed(subtitle_tasks)):
+                try:
+                    subtitle = await finished
+                except Exception as e:
+                    subtitle = e
+                results.append(subtitle)
+                progress.update(
+                    task_id,
+                    advance=1,
+                    description=f"Downloading subtitles {i + 1}/{len(subtitle_tasks)}",
+                )
+        successes = 0
+        for result in results:
+            if isinstance(result, Path):
+                successes += 1
         console.print(
-            f"[green][MEGOGO CLIENT][/green] Successfully downloaded [orange1]{len(subtitle_tasks)}[/orange1] subtitle(s)"
+            f"[green][MEGOGO CLIENT][/green] Successfully downloaded [orange1]{successes}[/orange1] subtitle(s)"
         )
         return results
 
@@ -169,6 +202,43 @@ def sanitize_filename(name: str, folder: bool = False) -> str:
         s = re.sub(r"\.+", ".", s)
         s = s.strip(".")
     return s or ""
+
+
+def get_unique_filename(file_path: str | Path, used_filenames: set[str] = None) -> Path:
+    """
+    Get a unique filename by incrementing numeric suffixes if needed.
+    If the filename ends with -N (1-2 digits), it increments N until no conflict.
+    """
+    file_path = Path(file_path)
+    path_str = str(file_path)
+    if used_filenames is None:
+        used_filenames = set()
+
+    # if the path doesn't exist and is not used, return as is
+    if not file_path.exists() and path_str not in used_filenames:
+        used_filenames.add(path_str)
+        return file_path
+
+    stem = file_path.stem
+    m = NUMBERED_SUFFIX.match(stem)
+
+    if m:
+        # file already ends in -N, so we start incrementing from N+1
+        main_stem = m.group(1)
+        i = int(m.group(2)) + 1
+    else:
+        # file has no numeric suffix, so we start with -1
+        main_stem = stem
+        i = 1
+
+    while True:
+        new_file_path = file_path.parent / f"{main_stem}-{i}{file_path.suffix}"
+        new_path_str = str(new_file_path)
+        if not new_file_path.exists() and new_path_str not in used_filenames:
+            used_filenames.add(new_path_str)
+            return new_file_path
+
+        i += 1
 
 
 def get_subtitle_files(directory: str | Path, *extensions) -> list[Path]:
@@ -233,7 +303,8 @@ async def main():
             speed=0.9,
         ):
             for subtitle in subtitles:
-                fix_common_issues(subtitle)
+                if isinstance(subtitle, Path):
+                    fix_common_issues(subtitle)
         console.print("[green][CLEANUP][/green] Cleanup complete")
     finally:
         await client.session.close()
