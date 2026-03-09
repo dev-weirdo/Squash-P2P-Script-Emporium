@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name           Disney+ Subtitle Downloader
+// @name           Disney+ Subtitle Downloader (fix)
 // @description    Download subtitles from Disney+
-// @version        1.1
+// @version        1.2
 // @author         squasher
 // @license        MIT; https://opensource.org/licenses/MIT
 // @match          https://www.disneyplus.com/*
@@ -42,12 +42,37 @@
         if (typeof document.initsub !== "undefined") document.initsub();
         listensend();
         document.handleinterval = setInterval(buttonhandle,100);
+        if (typeof window._dsnpFetchPatched === 'undefined') {
+            window._dsnpFetchPatched = true;
+            const origFetch = window.fetch.bind(window);
+            window.fetch = function(resource, init) {
+                // Resolve resource to string URL
+                let url;
+                try { url = (typeof resource === 'string') ? resource : resource.url; } catch(e) { url = '';}
+                return origFetch(resource, init).then(function(response) {
+                    try {
+                        if (response && response.ok && url) {
+                            let norm = url.split('#')[0];
+                            if (norm.match(/\.m3u8(\?.*)?$/i) || norm.match(/\.vtt(\?.*)?$/i)) {
+                                // clone & read text asynchronously, cache it
+                                response.clone().text().then(function(text) {
+                                    window._dsnpCache[norm] = text;
+                                    debuglog("Cached fetch response for: " + norm);
+                                }).catch(function(err){ debuglog("fetch clone text err: " + err); });
+                            }
+                        }
+                    } catch (ex) { debuglog("fetch patch error: " + ex); }
+                    return response;
+                });
+            };
+        }
     }
 
     if (!document.listen) init();
 
     document.initsub = function() {
         debuglog("initsub");
+        if (typeof window._dsnpCache === 'undefined') window._dsnpCache = {};
         document.disneyAuthToken = "";
         document.langs = [];
         document.segments = "";
@@ -70,6 +95,9 @@
         document.styleSheets[0].addRule('#subtitleTrackPicker > div:before','content:"";color:#fff;padding-right:25px;padding-top:2px;background:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAAIGNIUk0AAHonAACAgwAA+mQAAIDSAAB2hgAA7OkAADmeAAAV/sZ+0zoAAAE4SURBVHja1JS7LkRRFIa/M6aYRCEuCUEUgihFBolGVGqiFY1ConfpNB7CiygUGm8hOiMukwiCCMl8mj2xc5yZM8M0/mTlrLP2v75zydo7UclRL3AGlIAl4L6ZuUC+5oEZYBoo55lbAdai/LPTwFongG3pfwI3gZ3ovhjlXVG+BWz/6FbjKPuto1CbjWoLobYf1RZjRho4pt5F5g11QK2F6FFXo/UXdbwZEHVQvY2aztWPECdR/TkNawREHUpB03pSJ7J6Cf9gL3xOvDiiXmfAHtSplLek7qorqI/BeJjxxFG1kgNDPQjrn4VoLPozRqgCzAGXwFXILzJ8w+H6XgRegW7grcGs3gCTOfP8UgfGg139wwapxrugDl0H+oCkTZjAcsiTxBaO7HZUBI6BtfCmv4Un4aw8/RoA7wq6AO4uOhAAAAAASUVORK5CYII=) no-repeat right;width:20px;height:20px;position:absolute;top:6px;right:10px;opacity:0.6;cursor:pointer;');
         document.styleSheets[0].addRule('#subtitleTrackPicker > div:hover:before','opacity:1;');
         document.styleSheets[0].addRule('#subtitleTrackPicker > div:first-child:before','content:"All";');
+
+        // prepare retry map for 403 retries
+        if (typeof window._dsnpRetries === 'undefined') window._dsnpRetries = {};
     };
 
     // catch M3U8 files
@@ -121,23 +149,48 @@
                     } catch(e) {}
                 }, false);
             }
-            // intercept browse page API responses to grab release year
+            // intercept browse page API responses to grab release year/content title
             this.addEventListener('readystatechange', function(e) {
-                if (e.target.readyState === 4 && e.target.status === 200 && !document.releaseyear) {
+                if (e.target.readyState === 4 && e.target.status === 200) {
                     try {
                         var text = e.target.responseText;
                         if (text && text.indexOf('releaseYearRange') > -1) {
+                            window.__last_release_api_response = text;
                             var resp = JSON.parse(text);
+                            var contentTitle = resp?.data?.page?.visuals?.title;
                             var year = resp?.data?.page?.visuals?.metastringParts?.releaseYearRange?.startYear;
                             if (year) {
                                 document.releaseyear = year;
-                                console.log("Release year intercepted: " + year);
+                                console.log("Release year from API: " + year);
+                            }
+                            if (contentTitle) {
+                                contentTitle = contentTitle.replaceAll(" Of ", " of ");
+                                contentTitle = contentTitle.replaceAll(" The ", " the ");
+                                document.filename = contentTitle;
+                                console.log("Content title from API: " + contentTitle);
                             }
                         }
                     } catch(ex) {}
                 }
             }, false);
             send.call(this,...args);
+
+            this.addEventListener('load', function(e) {
+                try {
+                    var url = this._dsnpUrl || "";
+                    if (!url) return;
+                    // Normalize: remove fragment
+                    var norm = url.split('#')[0];
+                    if (norm.match(/\.m3u8(\?.*)?$/i) || norm.match(/\.vtt(\?.*)?$/i)) {
+                        // Only cache successful responses
+                        if (this.status === 200 && typeof this.responseText === 'string') {
+                            window._dsnpCache[norm] = this.responseText;
+                            // For debugging:
+                            debuglog("Cached response for: " + norm);
+                        }
+                    }
+                } catch (ex) { debuglog("cache save failed: " + ex); }
+            }, false);
         }
 
         if (typeof unsafeWindow !== "undefined") {
@@ -152,15 +205,15 @@
         }
     }
 
-    function fetchYearFromAPI() {
-        if (document.fetchingyear || document.releaseyear) return;
+    function fetchAPIDetails() {
+        if ((document.releaseyear && document.filename)) return;
 
         // extract entity ID from /play/UUID
-        var match = window.location.pathname.match(/\/play\/([a-f0-9-]+)/i);
-        if (!match) {
-            document.fetchingyear = false;
-            return;
-        }
+        var match = window.location.pathname.match(/\/(play|browse)\/([a-f0-9-]+)/i);
+        //if (!match) {
+        //    document.fetchingyear = false;
+        //    return;
+        //}
 
         if (!document.disneyAuthToken) {
             console.log("No auth token yet, will retry");
@@ -194,17 +247,18 @@
             if (http.readyState == 4 && http.status == 200) {
                 try {
                     var resp = JSON.parse(http.responseText);
+                    console.log(resp);
                     var contentTitle = resp?.data?.page?.visuals?.title;
                     var year = resp?.data?.page?.visuals?.metastringParts?.releaseYearRange?.startYear;
                     if (year) {
                         document.releaseyear = year;
-                        console.log("Release year from API: " + year);
+                        //console.log("Release year from API: " + year);
                     }
                     if (contentTitle) {
                         contentTitle = contentTitle.replaceAll(" Of ", " of ");
                         contentTitle = contentTitle.replaceAll(" The ", " the ");
                         document.filename = contentTitle;
-                        console.log("Content title from API: " + contentTitle);
+                        //console.log("Content title from API: " + contentTitle);
                     }
                 } catch(e) {
                     console.log("Failed to parse API response: " + e);
@@ -224,8 +278,8 @@
 
     document.m3u8sub = function(response) {
         var regexpm3u8 =/^#.{0,}GROUP-ID="sub-main".{0,}\.m3u8"$/gm;
-        var regexpvtt = /^[\w-_\/]{0,}MAIN[\w-_\/]{0,}.vtt$/gm;
-        var regexpvtt2 = /^[\w-_\/]{0,}.vtt$/gm;
+        var regexpvtt = /^[\w-_\/]{0,}MAIN[\w-_\/]{0,}.vtt(?:\?.*)?$/gm;
+        var regexpvtt2 = /^[\w-_\/]{0,}.vtt(?:\?.*)?$/gm;
 
         if (response.indexOf('#EXT-X-INDEPENDENT-SEGMENTS') > 0) {
             // sub infos
@@ -242,12 +296,34 @@
             if (!lines) lines = response.match(regexpvtt2);
             if (lines) {
                 lines.forEach(function(line) {
-                    var url = document.baseurl;
-                    var uri = document.langs[document.langid].URI;
-                    url += uri.substring(0, 2);
-                    if (line.indexOf("/") < 0) url += uri.substring(2, uri.lastIndexOf("/") + 1);
-                    url += line;
-                    document.vttlist.push(url);
+                    var lineTrim = line.trim();
+
+                    // Build full URL for vtt. Use the line as-is if it's absolute otherwise resolve relative to the playlist's URI.
+                    var vttUrl = "";
+                    try {
+                        if (/^https?:\/\//i.test(lineTrim)) {
+                            vttUrl = lineTrim;
+                        } else {
+                            // Determine base folder for language URIs (preserve any querystring/tokens that were part of the m3u8 language URI)
+                            var uri = document.langs[document.langid].URI || "";
+                            var uriBase = document.baseurl;
+                            if (uri.indexOf('/') > -1) {
+                                uriBase = document.baseurl + uri.substring(0, uri.lastIndexOf('/') + 1);
+                            }
+                            // Use URL() to resolve relative paths properly and keep query strings
+                            vttUrl = new URL(lineTrim, uriBase).toString();
+                        }
+                    } catch (ex) {
+                        debuglog("Failed to resolve VTT URL, fallback to naive concatenation");
+                        var url = document.baseurl;
+                        var uri = document.langs[document.langid].URI;
+                        url += uri.substring(0, 2);
+                        if (line.indexOf("/") < 0) url += uri.substring(2, uri.lastIndexOf("/") + 1);
+                        url += line;
+                        vttUrl = url;
+                    }
+
+                    document.vttlist.push(vttUrl);
                 });
             } else {
                 alert("Unable to parse the m3u8 file, please report a bug for this video.");
@@ -294,14 +370,17 @@
     }
 
     function buttonhandle() {
-        if (!document.releaseyear && window.location.pathname.indexOf("/play/") > -1) fetchYearFromAPI();
+        if (!document.releaseyear && window.location.pathname.indexOf("/play/") > -1) { /*fetchAPIDetails();*/ }
         var buttons = document.getElementsByClassName("control-icon-btn");
         if (buttons.length > 0) {
             if (typeof document.clickhandlesub !== "undefined") document.clickhandlesub();
             if (typeof document.clickhandleaudio !== "undefined") document.clickhandleaudio();
             // movie
             var titleElem = document.getElementsByClassName("title-field")[0];
-            if (titleElem && titleElem.innerText && titleElem.innerText.trim().length > 0) document.filename = titleElem.innerText.trim();
+            if (titleElem && titleElem.innerText && titleElem.innerText.trim().length > 0) {
+                console.log(titleElem.innerText.trim());
+                document.filename = titleElem.innerText.trim();
+            }
             // episode
             var epElem = document.getElementsByClassName("subtitle-field")[0];
             if (epElem && epElem.innerText && epElem.innerText.trim().length > 0) document.episode = epElem.innerText.trim();
@@ -339,7 +418,7 @@
                 debuglog("Download all subs");
                 document.zip = new JSZip();
                 document.downloadall = true;
-                document.downloadid =- 1;
+                document.downloadid = -1;
                 downloadnext();
             } else {
                 // download one sub
@@ -496,21 +575,58 @@
         }
     }
 
-    function getpagecontent(callback,url) {
+    function getpagecontent(callback, url) {
+        debuglog("getpagecontent requested: " + url);
+        try {
+            // normalize url for lookup (strip fragment only)
+            var norm = url.split('#')[0];
+
+            // direct exact-match in-cache (also try without trailing slash variants)
+            if (window._dsnpCache && window._dsnpCache[norm]) {
+                debuglog("Returning cached content for: " + norm);
+                setTimeout(function(){ callback(window._dsnpCache[norm]); }, 0);
+                return;
+            }
+            // Also try matching URLs where query param order differs - best-effort:
+            for (var k in window._dsnpCache) {
+                if (!window._dsnpCache.hasOwnProperty(k)) continue;
+                if (k.indexOf(norm) > -1 || norm.indexOf(k) > -1) {
+                    debuglog("Found near-match cache key: " + k + " for " + norm);
+                    setTimeout(function(){ callback(window._dsnpCache[k]); }, 0);
+                    return;
+                }
+            }
+        } catch (ex) { debuglog("cache lookup failed: " + ex); }
+
+        // If nothing cached, fall back to XHR attempt (may be blocked by CORS)
         debuglog("Downloading : " + url);
         var http = new XMLHttpRequest();
         http.open("GET", url, true);
+
+        // include cookies (CDN auth can be cookie-based) — keep if helpful
+        http.withCredentials = true;
+
+        if (document.disneyAuthToken && document.disneyAuthToken.length > 500) {
+            try { http.setRequestHeader("authorization", document.disneyAuthToken); } catch (ex) { debuglog("Failed to set Authorization header: " + ex); }
+        }
+
         http.onloadend = function() {
             if (http.readyState == 4 && http.status == 200) {
+                // cache successful response
+                try { window._dsnpCache[url.split('#')[0]] = http.responseText; } catch(e){}
                 callback(http.responseText);
             } else if (http.status === 404) {
                 debuglog("Not found");
+                callback("");
+            } else if (http.status === 403) {
+                debuglog("Forbidden (403) for " + url);
+                // fallback: return empty so caller doesn't hang (you can keep your retry logic)
                 callback("");
             } else {
                 debuglog("Unknown error, retrying");
                 setTimeout(function () { getpagecontent(callback,url); },100);
             }
-        }
+        };
         http.send();
     }
 
