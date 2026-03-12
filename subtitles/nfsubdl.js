@@ -2,7 +2,7 @@
 // @name        Netflix Subtitle Downloader (Squash Mod)
 // @description Allows you to download subtitles from Netflix, modified for 1-click all subs download
 // @license     MIT
-// @version     1.8
+// @version     1.9
 // @namespace   nfsubdl-squash-mod
 // @include     https://www.netflix.com/*
 // @grant       unsafeWindow
@@ -663,7 +663,7 @@ const LANG_MAP = {
     "es[sdh]": "es-419[sdh]",
     "es[forced]": "es-419[forced]",
     "nb": "no",
-    "nb-no": "nb",
+    "nb-no": "no",
     "nb[sdh]": "no[sdh]",
     "nb[forced]": "no[forced]",
     "sv-se": "sv",
@@ -987,56 +987,58 @@ const downloadAllSubsSequential = async () => {
 
     // main download loop
     for (let i = 0; i < allItems.length; i++) {
-        progress.updateLabel(`Downloading subtitle ${i+1}/${allItems.length}`)
-        const item = allItems[i];
-        await waitForSubtitleMenu(2000);
-        item.click();
+        try {
+            progress.updateLabel(`Downloading subtitle ${i+1}/${allItems.length}`)
+            const item = allItems[i];
+            await waitForSubtitleMenu(2000);
+            item.click();
 
-        const pollIntervalMs = 50; // adjust as needed
-        const maxAttempts = 200; // 200 * 50ms = 15s max wait
-        let attempts = 0;
-        let subs = getSubsFromCache(true);
-        let foundLang = null;
-        while (attempts++ < maxAttempts) {
-            // yield to the event loop, allow cache/menu updates to happen
-            await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-            subs = getSubsFromCache(true);
-            const availableLangs = Object.keys(subs).filter(lang =>
-                                                            !(/forced|stripped|dubtitle/i.test(lang))
-                                                           );
+            const pollIntervalMs = 50; // adjust as needed
+            const maxAttempts = 200; // 200 * 50ms = 10s max wait
+            let attempts = 0;
+            let subs = getSubsFromCache(true);
+            let foundLang = null;
+            while (attempts++ < maxAttempts) {
+                // yield to the event loop, allow cache/menu updates to happen
+                await sleep(pollIntervalMs);
+                subs = getSubsFromCache(true);
+                const availableLangs = Object.keys(subs).filter(lang =>
+                                                                !(/forced/i.test(lang))
+                                                               );
 
-            // if any available language is not already in the zip, we found a new subtitle
-            // and can break out of the loop
-            foundLang = availableLangs.find(lang => {
-                const fname = `${title}.${year}.NF.WEB.${lang}.vtt`;
-                if (!_zip.file(fname)) return lang;
-                return null;
-            });
+                // if any available language is not already in the zip, we found a new subtitle
+                // and can break out of the loop
+                foundLang = availableLangs.find(lang => {
+                    const fname = `${title}.${year}.NF.WEB.${lang}.vtt`;
+                    if (!_zip.file(fname)) return lang;
+                    return null;
+                });
 
-            if (foundLang != null) {
-                break;
+                if (foundLang != null) {
+                    break;
+                }
             }
-        }
-        if (foundLang != null) {
-            const [urls, extension] = pickFormat(subs[foundLang]);
-            for (const url of urls) {
-                try {
-                    const result = await fetch(url, {mode: "cors"});
-                    const data = await result.text();
-                    if (data.length > 0) {
-                        _zip.file(`${title}.${year}.NF.WEB.${foundLang}.${extension}`, data);
-                        break;
+            if (foundLang != null && !(/dubtitle|stripped/i.test(foundLang))) {
+                const [urls, extension] = pickFormat(subs[foundLang]);
+                for (const url of urls) {
+                    try {
+                        const result = await fetch(url, {mode: "cors"});
+                        const data = await result.text();
+                        if (data.length > 0) {
+                            _zip.file(`${title}.${year}.NF.WEB.${foundLang}.${extension}`, data);
+                            break;
+                        }
+                    } catch (e) {
+                        console.error("Failed to fetch subtitle", foundLang, e);
                     }
-                } catch (e) {
-                    console.error("Failed to fetch subtitle", foundLang, e);
+                }
+                if (batchDelay > 0) {
+                    progress.updateLabel(`Sleeping for ${batchDelay} seconds...`);
+                    await sleep(batchDelay * 1000);
                 }
             }
             progress.increment();
-            if (batchDelay > 0) {
-                progress.updateLabel(`Sleeping for ${batchDelay} seconds...`);
-                await sleep(batchDelay * 1000);
-            }
-        }
+        } catch (error) { }
     }
 
     clearInterval(intervalId);
