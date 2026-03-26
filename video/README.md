@@ -2,7 +2,7 @@
 <h2><a href="https://github.com/9Oc/Squash-P2P-Script-Emporium/blob/main/video/check_idr.py">check_idr</a>
 <a href="https://www.python.org/downloads/release/python-380/"><img src="https://img.shields.io/badge/Python-3.08%2B-brightgreen" alt="Python 3.07+"></a></h2>
 
-`check_idr.py` will determine if a given frame in an h264 raw stream is an IDR frame or not.
+`check_idr.py` will determine if a given frame in an h264 or mpeg-2 raw stream is an IDR frame or closed GOP I-frame (respectively). IDR frames (h264 bitstreams) and closed GOP I-frames (mpeg-2 bitstreams) are guaranteed to be safe cut points and merge points when making hybrid video streams.
 
 Dependencies:
 
@@ -12,11 +12,11 @@ Dependencies:
 <hr>
 
 ### Usage
-A path to a raw h264 stream and a frame number are required arguments.
+A path to a raw h264/mpeg-2 stream and a frame number are required arguments.
 
 `check_idr.py video.h264 --frame 1000`
 
-Adding the `--verbose` argument will output all IDR frames found up to the given frame number.
+Adding the `--verbose` argument will output all IDR frames/closed GOP I-frames found up to the given frame number.
 <hr>
 
 Example output:
