@@ -159,7 +159,7 @@ def find_safe_frames_mpeg2(video_file, target_frame, verbose: bool):
     # NOTE: MPEG-2 frames are stored in decode order but displayed in a different order.
     # B-frames are decoded after the I/P frames they reference, but displayed before them.
     # each picture header carries a temporal_reference field which is the frame's
-    # display-order offset within its GOP. The true display frame number is:
+    # display-order offset within its GOP. The display frame number is:
     #   display_frame = gop_display_base + temporal_reference
  
     try:
@@ -216,33 +216,34 @@ def find_safe_frames_mpeg2(video_file, target_frame, verbose: bool):
                             pass
                     continue
  
-                # frame type — use display_frame for all comparisons
+                # frame type, use display_frame for all comparisons
                 if in_picture_header and "picture_coding_type" in content:
                     in_picture_header = False
                     parts = content.split('=')
                     if len(parts) >= 2:
                         coding_type = parts[-1].strip()
                         if coding_type == '1':  # I-frame
+                            decode_frame = gop_display_base
                             display_frame = gop_display_base + current_temporal_ref
-                            all_i_frames.add(display_frame)
+                            all_i_frames.add((decode_frame, display_frame))
                             if pending_closed_gop:
                                 if display_frame == target_frame:
                                     target_is_safe = True
-                                    safe_cut_frames.add(display_frame)
+                                    safe_cut_frames.add((decode_frame, display_frame))
                                     process.terminate()
                                     break
                                 elif display_frame < target_frame:
-                                    safe_before = display_frame
-                                    safe_cut_frames.add(display_frame)
+                                    safe_before = (decode_frame, display_frame)
+                                    safe_cut_frames.add((decode_frame, display_frame))
                                 elif display_frame > target_frame and safe_after is None:
-                                    safe_after = display_frame
-                                    safe_cut_frames.add(display_frame)
+                                    safe_after = (decode_frame, display_frame)
+                                    safe_cut_frames.add((decode_frame, display_frame))
     finally:
         process.wait()
  
     end_time = time.time()
     console.print(f"\nExecution time: [blue]{end_time - start_time:.3f}[/] seconds")
- 
+    console.print(f"\nMPEG-2 output frame format: (decoding_order, display_order)")
     # report target frame status
     if target_is_safe:
         console.print(f"[green]Frame {target_frame} is a closed GOP I-frame[/]")
