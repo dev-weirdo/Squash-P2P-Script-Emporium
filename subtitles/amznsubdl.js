@@ -3,7 +3,7 @@
 // @description Download subtitles from Amazon Prime Video
 // @author      squasher
 // @license     MIT
-// @version     2.1
+// @version     3.4
 // @match       https://*.amazon.com/*
 // @match       https://*.amazon.de/*
 // @match       https://*.amazon.co.uk/*
@@ -13,6 +13,7 @@
 // @require     https://cdn.jsdelivr.net/gh/Stuk/jszip@579beb1d45c8d586d8be4411d5b2e48dea018c06/dist/jszip.min.js?version=3.1.5
 // @require     https://cdn.jsdelivr.net/gh/eligrey/FileSaver.js@283f438c31776b622670be002caf1986c40ce90c/dist/FileSaver.min.js?version=2018-12-29
 // ==/UserScript==
+
 class ProgressBar {
     constructor(max) {
         this.current = 0;
@@ -70,8 +71,6 @@ const DOWNLOADER_MENU = "subtitle-downloader-menu";
 const DOWNLOADER_MENU_HTML = `
 <ol>
 <li class="header">Amazon subtitle downloader</li>
-<li class="ep-title-in-filename">Add episode title to filename: <span></span></li>
-<li class="incomplete">Scroll to the bottom to load more episodes</li>
 </ol>
 `;
 
@@ -92,11 +91,7 @@ const SCRIPT_CSS = `
 #${DOWNLOADER_MENU} li { padding: 10px; cursor: pointer; }
 #${DOWNLOADER_MENU} li.header { font-weight: bold; cursor: default; }
 #${DOWNLOADER_MENU} li:not(.header):hover { background: #444; }
-#${DOWNLOADER_MENU} li > div { display: none; position: static; }
-#${DOWNLOADER_MENU} li:hover > div { display: block; }
-body:not(.asd-more-eps) #${DOWNLOADER_MENU} .incomplete { display: none; }
-#${DOWNLOADER_MENU}:not(.series) .series { display: none; }
-#${DOWNLOADER_MENU}.series .not-series { display: none; }
+#${DOWNLOADER_MENU} li.status { cursor: default; opacity: 0.6; font-style: italic; }
 `;
 
 const EXTENSIONS = {
@@ -104,52 +99,108 @@ const EXTENSIONS = {
     "DFXP": "dfxp"
 };
 
-let INFO_URL = null;
-const INFO_CACHE = new Map();
+// cache captured subtitle data from intercepted playback responses
+// map titleId -> { subtitleUrls, forcedNarrativeUrls }
+const SUBTITLE_CACHE = new Map();
 
-let epTitleInFilename = localStorage.getItem("ASD_ep-title-in-filename") === "true";
+// try multiple known JSON paths Amazon has used for subtitle URLs across API versions, changes frequently
+// returns { subtitleUrls, forcedNarrativeUrls } or null if nothing found.
+const extractSubtitleResult = (data) => {
+    const candidates = [
+        data?.playbackData?.timedTextUrls?.result,
+        data?.playbackData?.timedTextUrls,
+        // original / legacy paths
+        data?.timedTextUrls?.result,
+        data?.timedTextUrls,
+        // other wrappers
+        data?.catalogMetadata?.timedTextUrls?.result,
+        data?.catalogMetadata?.timedTextUrls,
+        data?.playbackResources?.timedTextUrls?.result,
+        data?.playbackResources?.timedTextUrls,
+        data?.resources?.timedTextUrls?.result,
+        data?.resources?.timedTextUrls,
+        data?.subtitleResources,
+        data?.subtitles,
+    ];
 
-const setEpTitleInFilename = () => {
-    const span = document.querySelector(`#${DOWNLOADER_MENU} .ep-title-in-filename > span`);
-    if (span) span.innerHTML = (epTitleInFilename ? "on" : "off");
-};
-
-const toggleEpTitleInFilename = () => {
-    epTitleInFilename = !epTitleInFilename;
-    if (epTitleInFilename) {
-        localStorage.setItem("ASD_ep-title-in-filename", epTitleInFilename);
-    } else {
-        localStorage.removeItem("ASD_ep-title-in-filename");
+    for (const c of candidates) {
+        if (c && typeof c === "object" && (c.subtitleUrls?.length || c.forcedNarrativeUrls?.length)) {
+            return c;
+        }
     }
-    setEpTitleInFilename();
+
+    // walk every top-level key and look for timedTextUrls / subtitleUrls inside
+    if (data && typeof data === "object") {
+        for (const topKey of Object.keys(data)) {
+            const top = data[topKey];
+            if (!top || typeof top !== "object") continue;
+
+            const innerCandidates = [
+                top?.timedTextUrls?.result,
+                top?.timedTextUrls,
+                top?.subtitleUrls !== undefined ? top : null,
+            ];
+            for (const c of innerCandidates) {
+                if (c && typeof c === "object" && (c.subtitleUrls?.length || c.forcedNarrativeUrls?.length)) {
+                    console.log("[Amazon Subtitle Downloader] found subtitles at non-standard path:", topKey);
+                    return c;
+                }
+            }
+
+            for (const innerKey of Object.keys(top)) {
+                const inner = top[innerKey];
+                if (!inner || typeof inner !== "object") continue;
+                if (inner.subtitleUrls?.length || inner.forcedNarrativeUrls?.length) {
+                    console.log("[Amazon Subtitle Downloader] found subtitles at deep path:", topKey, "->", innerKey);
+                    return inner;
+                }
+            }
+        }
+    }
+
+    // log keys inside timedTextUrls if present, to help debug
+    if (data?.timedTextUrls && typeof data.timedTextUrls === "object") {
+        console.warn("[Amazon Subtitle Downloader] timedTextUrls found but unrecognized structure. Keys:", Object.keys(data.timedTextUrls));
+    }
+    if (data?.playbackData && typeof data.playbackData === "object") {
+        console.warn("[Amazon Subtitle Downloader] playbackData keys:", Object.keys(data.playbackData));
+    }
+
+    return null;
 };
 
-const showIncompleteWarning = () => {
-    document.body.classList.add("asd-more-eps");
+const LANG_MAP = {
+    "ar-eg": "ar", "ar-sa": "ar", "ar-001": "ar", "ar-ar": "ar",
+    "bg-bg": "bg", "bn-in": "bn", "ca-es": "ca", "cs-cz": "cs",
+    "da-dk": "da", "de-de": "de", "el-gr": "el", "en-gb": "en-GB",
+    "en": "en-US", "en-us": "en-US", "es-es": "es-ES", "es": "es-419",
+    "es-mx": "es-MX", "eu-es": "eu", "fi-fi": "fi", "fil-ph": "fil",
+    "fil-tl": "fil-TL", "fr-ca": "fr-CA", "fr": "fr-FR", "fr-fr": "fr-FR",
+    "gl-es": "gl", "he-il": "he", "he-in": "he", "hi-in": "hi",
+    "hr-hr": "hr", "hu-hu": "hu", "id-id": "id", "it-it": "it",
+    "is-is": "is", "ja-jp": "ja", "kn-in": "kn", "ko-kr": "ko",
+    "lt-lt": "lt", "lv-lv": "lv", "ml-in": "ml", "mr-in": "mr",
+    "ms-my": "ms", "nb": "no", "nb-no": "no", "nn-no": "nn", "no-no": "no",
+    "nl-nl": "nl", "pl-pl": "pl", "pt": "pt-PT", "pt-pt": "pt-PT",
+    "pt-br": "pt-BR", "ro-ro": "ro", "ru-ru": "ru", "sl-sl": "sl",
+    "sl-si": "sl", "sk-sk": "sk", "sv-se": "sv", "sv-sv": "sv",
+    "ta-in": "ta", "te-in": "te", "th-th": "th", "tr-tr": "tr",
+    "uk-ua": "uk", "vi-vn": "vi", "zh-hans": "zh-Hans", "zh-hant": "zh-Hant",
 };
 
-const hideIncompleteWarning = () => {
-    try {
-        document.body.classList.remove("asd-more-eps");
-    } catch (ignore) { }
-};
+function mapLangCode(langCode) {
+    if (LANG_MAP.hasOwnProperty(langCode)) langCode = LANG_MAP[langCode];
+    return langCode;
+}
 
-const scrollDown = () => {
-    (document.querySelector('[data-testid="dp-episode-list-pagination-marker"]') || document.querySelector("#navFooter")).scrollIntoView();
-};
+const asyncSleep = (seconds, value) => new Promise(resolve => {
+    window.setTimeout(resolve, seconds * 1000, value);
+});
 
-const ensureMenu = () => {
-    if (document.querySelector(`#${DOWNLOADER_MENU}`)) return;
-    const menu = document.createElement("div");
-    menu.id = DOWNLOADER_MENU;
-    menu.innerHTML = DOWNLOADER_MENU_HTML;
-    document.body.appendChild(menu);
-    menu.querySelector(".ep-title-in-filename").addEventListener("click", toggleEpTitleInFilename);
-    menu.querySelector(".incomplete").addEventListener("click", scrollDown);
-    setEpTitleInFilename();
-};
+// sanitize filenames
+const sanitizeName = name => name.replace(/[:*?"<>|\\\/]+/g, "").replace(/ /g, ".").replace(/\.{2,}/g, ".").replace("Prime.Video.", "");
 
-// XML to SRT
+// XML to SRT unused, but if a user wants it, it can be enabled
 const parseTTMLLine = (line, parentStyle, styles) => {
     const topStyle = line.getAttribute("style") || parentStyle;
     let prefix = "";
@@ -196,6 +247,7 @@ const parseTTMLLine = (line, parentStyle, styles) => {
 
     return result;
 };
+
 const xmlToSrt = (xmlString, lang) => {
     try {
         let parser = new DOMParser();
@@ -221,8 +273,6 @@ const xmlToSrt = (xmlString, lang) => {
         }
 
         const topStyle = xmlDoc.querySelector("body").getAttribute("style");
-
-        console.log(topStyle, styles, regionsTop);
 
         const lines = [];
         const textarea = document.createElement("textarea");
@@ -254,747 +304,419 @@ const xmlToSrt = (xmlString, lang) => {
     }
 };
 
-const sanitizeName = name => name.replace(/[:*?"<>|\\\/]+/g, "").replace(/ /g, ".").replace(/\.{2,}/g, ".");
-
-const LANG_MAP = {
-    "ar-eg": "ar",
-    "ar-sa": "ar",
-    "ar-001": "ar",
-    "bg-bg": "bg",
-    "ca-es": "ca",
-    "cs-cz": "cs",
-    "da-dk": "da",
-    "de-de": "de",
-    "el-gr": "el",
-    "en-gb": "en-GB",
-    "en": "en-US",
-    "en-us": "en-US",
-    "es-es": "es-ES",
-    "es": "es-419",
-    "eu-es": "eu",
-    "fi-fi": "fi",
-    "fil-ph": "fil",
-    "fil-tl": "fil-TL",
-    "fr-ca": "fr-CA",
-    "fr": "fr-FR",
-    "fr-fr": "fr-FR",
-    "gl-es": "gl",
-    "he-il": "he",
-    "hi-in": "hi",
-    "hu-hu": "hu",
-    "id-id": "id",
-    "it-it": "it",
-    "ja-jp": "ja",
-    "kn-in": "kn",
-    "ko-kr": "ko",
-    "lt-lt": "lt",
-    "lv-lv": "lv",
-    "ml-in": "ml",
-    "ms-my": "ms",
-    "nb-no": "nb",
-    "nn-no": "nn",
-    "no-no": "no",
-    "nl-nl": "nl",
-    "pl-pl": "pl",
-    "pt": "pt-PT",
-    "pt-pt": "pt-PT",
-    "pt-br": "pt-BR",
-    "ro-ro": "ro",
-    "ru-ru": "ru",
-    "sl-sl": "sl",
-    "sl-si": "sl",
-    "sk-sk": "sk",
-    "sv-se": "sv",
-    "sv-sv": "sv",
-    "ta-in": "ta",
-    "te-in": "te",
-    "th-th": "th",
-    "tr-tr": "tr",
-    "uk-ua": "uk",
-    "vi-vn": "vi",
-    "zh-hans": "zh-Hans",
-    "zh-hant": "zh-Hant",
+// get titleId from the current page
+const getTitleIdFromPage = () => {
+    const patterns = [
+        /\/detail\/(amzn1[^\/?#]+)/i,
+        /\/detail\/([A-Z0-9]+)/i,
+        /\/dp\/(amzn1[^\/?#]+)/i,
+        /\/dp\/([A-Z0-9]+)/i,
+        /\/gp\/video\/detail\/(amzn1[^\/?#]+)/i,
+        /\/gp\/video\/detail\/([A-Z0-9]+)/i,
+        /\/watch\/(amzn1[^\/?#]+)/i,
+        /\/watch\/([A-Z0-9]+)/i,
+    ];
+    for (const p of patterns) {
+        const m = location.pathname.match(p);
+        if (m) return m[1];
+    }
+    const params = new URLSearchParams(location.search);
+    return params.get("titleId") || params.get("gti") || null;
 };
 
-function mapLangCode(langCode) {
-    if (LANG_MAP.hasOwnProperty(langCode)) langCode = LANG_MAP[langCode];
-    return langCode;
-}
-
-const asyncSleep = (seconds, value) => new Promise(resolve => {
-    window.setTimeout(resolve, seconds * 1000, value);
-});
-
-const getName = (episodeId, addTitle, addSeriesName) => {
-    let seasonNumber = 0;
-    let digits = 2;
-    let seriesName = "UNKNOWN";
-
-    const info = INFO_CACHE.get(episodeId);
-    const season = INFO_CACHE.get(info.show);
-    if (typeof season !== "undefined") {
-        seasonNumber = season.season;
-        digits = season.digits;
-        seriesName = season.title;
-    }
-
-    let title = (
-        "S" + seasonNumber.toString().padStart(2, "0")
-        + "E" + info.episode.toString().padStart(digits, "0")
-    );
-
-    if (addTitle) title += " " + info.title;
-    if (addSeriesName) title = seriesName + " " + title;
-
-    return title;
-};
-
-const createQueue = ids => {
-    let archiveName = null;
-    const names = new Set();
-    const queue = new Map();
-    for (const id of ids) {
-        const info = JSON.parse(JSON.stringify(INFO_CACHE.get(id)));
-        let name;
-        if (info.type === "movie") {
-            archiveName = sanitizeName(info.title + "." + info.year);
-            name = archiveName;
-        } else if (info.type === "episode") {
-            name = sanitizeName(getName(id, epTitleInFilename, true));
-            if (archiveName === null) {
-                try {
-                    const series = INFO_CACHE.get(info.show);
-                    archiveName = sanitizeName(series.title + ".S" + series.season.toString().padStart(2, "0"));
-                } catch (ignore) { }
-            }
-        } else {
-            continue;
-        }
-        let subName = name;
-        let i = 2;
-        while (names.has(subName)) {
-            subName = `${subName}_${i}`;
-            ++i;
-        }
-        names.add(subName);
-        info.filename = subName;
-        queue.set(id, info);
-    }
-    if (archiveName === null) archiveName = "subs";
-
-    return [archiveName + ".zip", queue];
-};
-
-const getSubInfo = async envelope => {
-    const response = await fetch(
-        INFO_URL,
-        {
-            "credentials": "include",
-            "method": "POST",
-            "mode": "cors",
-            "body": JSON.stringify({
-                "globalParameters": {
-                    "deviceCapabilityFamily": "WebPlayer",
-                    "playbackEnvelope": envelope
-                },
-                "timedTextUrlsRequest": {
-                    "supportedTimedTextFormats": ["TTMLv2", "DFXP"]
-                }
-            })
-        }
-    );
-    const data = await response.json();
-    if (data.globalError) {
-        if (data.globalError.code && data.globalError.code === "PlaybackEnvelope.Expired") {
-            throw "authentication expired, refresh the page and try again";
-        } else {
-            throw data.globalError;
-        }
-    }
+// get titleId from a playback resources URL
+const getTitleIdFromUrl = (url) => {
     try {
-        return data.timedTextUrls.result;
-    } catch (error) {
-        console.log(data);
-        throw error;
+        const u = new URL(url);
+        return u.searchParams.get("titleId") || null;
+    } catch (e) {
+        return null;
     }
 };
 
-const download = async (e) => {
-    const el = e?.currentTarget || (e?.target && e.target.closest?.("[data-id]"));
-    if (!el) return;
+// get the content title from the page
+const getPageTitle = () => {
+    const selectors = [
+        '[data-automation-id="title"]',
+        '[data-testid="title"]',
+        'h1[data-title]',
+        'h1',
+        '.av-detail-section h1',
+    ];
+    for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el && el.textContent.trim()) return el.textContent.trim();
+    }
+    return document.title.replace(/\s*[-–|].*(?:Prime Video|Amazon).*$/i, "").replace("Prime Video: ", "").trim();
+};
 
-    const idsAttr = el.getAttribute("data-id") || "";
-    const ids = idsAttr.split(";");
-    if (ids.length === 1 && ids[0] === "") return;
-    if (!INFO_URL) {
-        alert("Playback URL not found yet. Wait a few seconds and try again.\nIf playback URL still not found, refresh and try again.");
+// get the release year from the page
+const getReleaseYear = () => {
+    const el = document.querySelector('span[data-automation-id="release-year-badge"]');
+    if (el) return el.textContent.trim();
+
+};
+
+// download subtitles using cached response data
+const downloadFromCache = async (titleId) => {
+    const cached = SUBTITLE_CACHE.get(titleId);
+    if (!cached) {
+        alert(
+            "No subtitle data captured yet for this title.\n\n" +
+            "Wait for the page to fully load, then try again."
+        );
         return;
     }
 
-    const [archiveName, queue] = createQueue(ids);
-    const metadataProgress = new ProgressBar(queue.size);
-    const subs = new Map();
-    for (const [id, info] of queue) {
-        const resultPromise = getSubInfo(info.envelope);
-        let result;
-        let error = null;
+    const displayTitle = getPageTitle() || titleId;
+    const releaseYear = getReleaseYear()
+    const allSubs = [].concat(cached.subtitleUrls || [], cached.forcedNarrativeUrls || []);
+    if (allSubs.length === 0) {
+        alert("No subtitles found");
+        return;
+    }
+
+    const safeName = sanitizeName(displayTitle);
+    const subsEntries = [];
+
+    for (const subtitle of allSubs) {
+        let lang = mapLangCode(subtitle.languageCode);
+        if (subtitle.subtype !== "Dialog") lang += `[${subtitle.subtype}]`;
+
+        if (subtitle.type === "Subtitle") {
+            // no suffix
+        } else if (subtitle.type === "Sdh") {
+            lang += "[sdh]";
+        } else if (subtitle.type === "ForcedNarrative") {
+            lang += "[forced]";
+        } else if (subtitle.type === "SubtitleMachineGenerated") {
+            lang += "[machine-generated]";
+        } else {
+            lang += `[${subtitle.type}]`;
+        }
+
+        let subName = safeName + "." + releaseYear + ".AMZN.WEB." + lang;
+        // deduplicate names
+        const usedNames = subsEntries.map(e => e.name);
+        let i = 2;
+        while (usedNames.includes(subName)) {
+            subName = `${safeName}.AMZN.WEB.${lang}_${i}`;
+            ++i;
+        }
+        subsEntries.push({
+            name: subName,
+            url: subtitle.url,
+            type: subtitle.format,
+            language: subtitle.languageCode
+        });
+    }
+
+    const progress = new ProgressBar(subsEntries.length);
+    let stopped = false;
+
+    // listen for stop click
+    progress.stop.then(() => { stopped = true; });
+
+    // fetch all subtitle files in parallel
+    const fetchResults = await Promise.all(
+        subsEntries.map(entry => {
+            let extension = EXTENSIONS[entry.type];
+            if (typeof extension === "undefined") {
+                const match = entry.url.match(/\.([^.\/]+)$/);
+                extension = match ? match[1] : entry.type.toLowerCase();
+            }
+            return fetch(entry.url, { mode: "cors" })
+                .then(resp => resp.arrayBuffer())
+                .then(buf => {
+                    progress.increment();
+                    return { entry, extension, buf, error: null };
+                })
+                .catch(e => {
+                    progress.increment();
+                    return { entry, extension, buf: null, error: e };
+                });
+        })
+    );
+
+    progress.destroy();
+
+    if (stopped) return;
+
+    const _zip = new JSZip();
+    let errorCount = 0;
+
+    for (const { entry, extension, buf, error } of fetchResults) {
+        if (error || !buf) {
+            console.warn("[Amazon Subtitle Downloader] failed to download:", entry.name, error);
+            errorCount++;
+            continue;
+        }
+
+        let subFilename = entry.name + "." + extension;
+
+        // strip SDH tag if the subtitle doesn't actually contain SDH markers
+        const bytes = new Uint8Array(buf);
+        const hasSdh = bytes.some(b => b === 40 || b === 41 || b === 91 || b === 93);
+        if (!hasSdh && subFilename.includes("[sdh]")) {
+            subFilename = subFilename.replace("[sdh]", "");
+        }
+        if (!subFilename.includes("machine-generated")) {
+            _zip.file(subFilename, buf);
+        }
+    }
+
+    if (errorCount > 0) {
+        console.warn(`[Amazon Subtitle Downloader] ${errorCount} subtitle(s) failed to download`);
+    }
+
+    const content = await _zip.generateAsync({ type: "blob" });
+    saveAs(content, safeName + ".zip");
+};
+
+// script menu interface
+const updateMenuStatus = () => {
+    const menu = document.querySelector(`#${DOWNLOADER_MENU}`);
+    if (!menu) return;
+
+    const titleId = getTitleIdFromPage();
+    const statusEl = menu.querySelector(".status");
+    const downloadEl = menu.querySelector(".download-btn");
+
+    if (!titleId) {
+        if (statusEl) statusEl.innerHTML = "Navigate to a title page";
+        if (downloadEl) downloadEl.style.display = "none";
+        return;
+    }
+
+    if (SUBTITLE_CACHE.has(titleId)) {
+        const count = (SUBTITLE_CACHE.get(titleId).subtitleUrls || []).length +
+                      (SUBTITLE_CACHE.get(titleId).forcedNarrativeUrls || []).length;
+        if (statusEl) statusEl.innerHTML = `&#10003; ${count} subtitle track(s) captured`;
+        if (downloadEl) {
+            downloadEl.style.display = "block";
+            downloadEl.style.opacity = "1";
+            downloadEl.style.cursor = "pointer";
+            downloadEl.onclick = () => downloadFromCache(titleId);
+        }
+    } else {
+        if (statusEl) statusEl.innerHTML = "Waiting for subtitle data...";
+        if (downloadEl) {
+            downloadEl.style.display = "block";
+            downloadEl.style.opacity = "0.5";
+            downloadEl.style.cursor = "pointer";
+            downloadEl.onclick = () => downloadFromCache(titleId);
+        }
+    }
+};
+
+const ensureMenu = () => {
+    if (document.querySelector(`#${DOWNLOADER_MENU}`)) {
+        updateMenuStatus();
+        return;
+    }
+    const menu = document.createElement("div");
+    menu.id = DOWNLOADER_MENU;
+    menu.innerHTML = DOWNLOADER_MENU_HTML;
+    document.body.appendChild(menu);
+
+    const ol = menu.querySelector("ol");
+
+    const statusLi = document.createElement("li");
+    statusLi.className = "status";
+    statusLi.innerHTML = "Waiting...";
+    ol.appendChild(statusLi);
+
+    const downloadLi = document.createElement("li");
+    downloadLi.className = "download-btn";
+    downloadLi.innerHTML = "Download subtitles";
+    downloadLi.style.fontWeight = "bold";
+    downloadLi.style.display = "none";
+    ol.appendChild(downloadLi);
+
+    updateMenuStatus();
+};
+
+// intercept fetch to capture playback responses
+
+// url match GetVodPlaybackResources endpoint
+const isPlaybackUrl = (u) => typeof u === "string" && /GetVodPlaybackResources/i.test(u);
+
+// wait-for-valid-response helpers (to handle transient timedTextUrls.error)
+const WAIT_FOR_VALID_MS = 8000; // wait this long for a later valid playback response
+const PENDING_PLAYBACK = new Map(); // key -> { timeoutId, error }
+
+// extract a timedTextUrls.error if present
+function getTimedTextError(data) {
+    if (!data || typeof data !== "object") return null;
+    const candidates = [
+        data?.timedTextUrls,
+        data?.timedTextUrls?.result,
+        data?.playbackData?.timedTextUrls,
+        data?.playbackData?.timedTextUrls?.result,
+        data?.playbackData?.result?.timedTextUrls,
+        data?.playbackData?.result?.timedTextUrls?.result,
+    ];
+    for (const c of candidates) {
+        if (c && typeof c === "object" && c.error) return c.error;
+    }
+    // scan top-level keys for timedTextUrls.error
+    for (const k of Object.keys(data)) {
         try {
-            result = await Promise.race([resultPromise, metadataProgress.stop, asyncSleep(30, TIMEOUT_ERROR)]);
-        } catch (e) {
-            console.log(e);
-            error = `error: ${e}`;
-        }
-        if (result === STOP_THE_DOWNLOAD) {
-            error = "stopped by user";
-        } else if (result === TIMEOUT_ERROR) {
-            error = "timeout error";
-        }
-        if (error !== null) {
-            alert(error);
-            metadataProgress.destroy();
+            const v = data[k];
+            if (v && typeof v === "object" && v.timedTextUrls && v.timedTextUrls.error) return v.timedTextUrls.error;
+            if (v && typeof v === "object" && v.timedTextUrls?.result && v.timedTextUrls.result.error) return v.timedTextUrls.result.error;
+        } catch (e) {}
+    }
+    return null;
+}
+
+// handler used by both interceptors to process playback JSON responses
+function handlePlaybackResponse(data, titleId, url, source) {
+    try {
+        const result = extractSubtitleResult(data);
+        if (result) {
+            // valid, cache it and clear any pending error wait
+            const cacheKey = titleId || getTitleIdFromPage() || url || "unknown";
+            SUBTITLE_CACHE.set(cacheKey, result);
+            console.log("[Amazon Subtitle Downloader] cached subtitle data for:", cacheKey,
+                        (result.subtitleUrls || []).length, "subtitle tracks,",
+                        (result.forcedNarrativeUrls || []).length, "forced narrative tracks (source:", source, ")");
+            updateMenuStatus();
+
+            // clear any pending timeout for this url/titleId
+            const key = titleId || url;
+            const p = PENDING_PLAYBACK.get(key);
+            if (p) {
+                clearTimeout(p.timeoutId);
+                PENDING_PLAYBACK.delete(key);
+            }
             return;
         }
 
-        metadataProgress.increment();
-        if (typeof result === "undefined") continue;
-
-        for (const subtitle of [].concat(result.subtitleUrls || [], result.forcedNarrativeUrls || [])) {
-            let lang = subtitle.languageCode;
-            lang = mapLangCode(lang);
-            if (subtitle.subtype !== "Dialog") lang += `[${subtitle.subtype}]`;
-
-            if (subtitle.type === "Subtitle") {
-                //do not add type to lang code
-            } else if (subtitle.type === "Sdh") {
-                lang += "[sdh]";
-            } else if (subtitle.type === "ForcedNarrative") {
-                lang += "[forced]";
-            } else if (subtitle.type === "SubtitleMachineGenerated") {
-                lang += "[machine-generated]";
-            } else {
-                lang += `[${subtitle.type}]`;
-            }
-            let subName = info.filename.replace("&#39;", "'");
-            subName = subName.replace("&#38;", "&");
-            subName = subName.replace(".-.", ".");
-            subName = subName.replace(/\.{2,}/g, '.');
-            subName += ".AMZN.WEB." + lang;
-            let i = 2;
-            while (subs.has(subName)) {
-                subName = `${subName}_${i}`;
-                ++i;
-            }
-            subs.set(
-                subName,
-                {
-                    "url": subtitle.url,
-                    "type": subtitle.format,
-                    "language": subtitle.languageCode
-                }
-            );
-        }
-    }
-    metadataProgress.destroy();
-
-    if (subs.size === 0) {
-        alert("no subtitles found");
-        return;
-    }
-
-    const _zip = new JSZip();
-    const progress = new ProgressBar(subs.size);
-    for (const [filename, details] of subs) {
-        let extension = EXTENSIONS[details.type];
-        if (typeof extension === "undefined") {
-            const match = details.url.match(/\.([^\/]+)$/);
-            if (match === null) {
-                extension = details.type.toLocaleLowerCase();
-            } else {
-                extension = match[1];
-            }
-        }
-
-        let subFilename = filename + "." + extension;
-        const resultPromise = fetch(details.url, { "mode": "cors" });
-        let result;
-        let error = null;
-        try {
-            result = await Promise.race([resultPromise, progress.stop, asyncSleep(30, TIMEOUT_ERROR)]);
-        } catch (e) {
-            error = `error: ${e}`;
-        }
-        if (result === STOP_THE_DOWNLOAD) {
-            error = STOP_THE_DOWNLOAD;
-        } else if (result === TIMEOUT_ERROR) {
-            error = "timeout error";
-        }
-        if (error !== null) {
-            if (error !== STOP_THE_DOWNLOAD) alert(error);
-            break;
-        }
-        progress.increment();
-
-        // amazon labeling is trash, so strip SDH tag if the subtitle is not actually SDH
-        let data = await result.arrayBuffer();
-        const bytes = new Uint8Array(data);
-
-        // ASCII codes: '('=40, ')'=41, '['=91, ']'=93
-        const hasSdh = bytes.some(b => b === 40 || b === 41 || b === 91 || b === 93);
-        if (!hasSdh && subFilename.includes("[sdh]")) {
-            let i = 2;
-            while (subs.has(subFilename)) {
-                subFilename = `${subFilename}_${i}`;
-                ++i;
-            }
-            subFilename = subFilename.replace("[sdh]", "");
-        }
-        if (!subFilename.includes("machine-generated")) _zip.file(subFilename, data);
-    }
-    progress.destroy();
-
-    const content = await _zip.generateAsync({ type: "blob" });
-    saveAs(content, archiveName);
-};
-
-const addDownloadButtons = parsedActions => {
-    ensureMenu();
-    const menu = document.querySelector(`#${DOWNLOADER_MENU} > ol`);
-
-    for (const [type, details] of parsedActions) {
-        const li = document.createElement("li");
-        let ids = null;
-        if (type === "movie") {
-            li.innerHTML = "Download subtitles for this movie";
-            ids = details;
-        } else if (type === "batch" && details.length > 0) {
-            li.innerHTML = "Download subtitles for this batch <div><ol></ol></div>";
-            ids = details.join(";");
-            const ol = li.querySelector("ol");
-            for (const episodeId of details) {
-                const li = document.createElement("li");
-                li.setAttribute("data-id", episodeId);
-                li.innerHTML = getName(episodeId, true, false);
-                ol.append(li);
-            }
-        } else {
-            continue;
-        }
-        li.setAttribute("data-id", ids);
-        li.addEventListener("click", download, true);
-        menu.append(li);
-    }
-};
-
-// amazon changes playback envelope frequently, so attempt to recursively find it regardless of shape
-const findEnvelope = (obj) => {
-    if (!obj || typeof obj !== "object") { return null; }
-    if (obj.playbackEnvelope) return { playbackEnvelope: obj.playbackEnvelope, expiryTime: obj.expiryTime };
-    if (Array.isArray(obj)) {
-        for (const v of obj) {
-            const r = findEnvelope(v);
-            if (r) return r;
-        }
-    } else {
-        for (const v of Object.values(obj)) {
-            const r = findEnvelope(v);
-            if (r) return r;
-        }
-    }
-    return null;
-};
-
-const parseActions = actions => {
-    const parsed = [];
-    const series = {};
-
-    for (const pair of actions) {
-        // support two shapes:
-        //  - actions is array of [id, playbackLike]
-        //  - actions may come as array of [id, actionObject]
-        const id = pair[0];
-        const actionOrPlayback = pair[1];
-        console.log(actionOrPlayback);
-
-        const info = INFO_CACHE.get(id);
-        console.log(info);
-        if (typeof info === "undefined") continue;
-        if (info.type !== "movie" && info.type !== "episode") continue;
-        if (typeof info.envelope !== "undefined") continue;
-
-        // collect candidate objects to inspect for an envelope
-        const candidates = [];
-
-        // if this looks already like a playback-like object, add it
-        if (actionOrPlayback && typeof actionOrPlayback === "object") {
-            candidates.push(actionOrPlayback);
-
-            // if action object contains playbackActions directly (old shape)
-            if (actionOrPlayback.playbackActions) candidates.push(actionOrPlayback.playbackActions);
-
-            // if action contains payload with playback
-            if (actionOrPlayback.payload) {
-                if (actionOrPlayback.payload.playback) {
-                    candidates.push(actionOrPlayback.payload.playback);
-                } else {
-                    candidates.push(actionOrPlayback.payload);
-                }
-            }
-
-            // primaryActions / secondaryActions are arrays of action entries
-            const addActionArray = arr => {
-                if (!Array.isArray(arr)) return;
-                for (const a of arr) {
-                    if (!a || typeof a !== "object") continue;
-                    if (a.payload && (a.payload.playback || a.payload.payloadType === "PLAYBACK")) {
-                        candidates.push(a.payload.playback || a.payload);
-                    } else if (a.playback) {
-                        candidates.push(a.playback);
-                    } else {
-                        candidates.push(a);
+        // no valid subtitles found in this response
+        // if there is an explicit timedTextUrls.error, wait a bit for a later response
+        const timedErr = getTimedTextError(data);
+        if (timedErr) {
+            const key = titleId || url;
+            if (!PENDING_PLAYBACK.has(key)) {
+                console.warn("[Amazon Subtitle Downloader] timedTextUrls returned error (will wait briefly for a valid response):", timedErr);
+                const timeoutId = setTimeout(() => {
+                    // timeout expired and no valid response arrived
+                    const pending = PENDING_PLAYBACK.get(key);
+                    if (pending) {
+                        console.warn("[Amazon Subtitle Downloader] timedTextUrls error persisted after wait:", pending.error);
+                        PENDING_PLAYBACK.delete(key);
                     }
-                }
-            };
-            addActionArray(actionOrPlayback.primaryActions);
-            addActionArray(actionOrPlayback.secondaryActions);
-            addActionArray(actionOrPlayback.actions);
-        }
-
-        // if the input pair second item is an array (some callers may push arrays), include it
-        if (Array.isArray(actionOrPlayback)) candidates.push(...actionOrPlayback);
-
-        // try to find envelope in any candidate
-        let foundEnv = null;
-        for (const c of candidates) {
-            try {
-                const env = findEnvelope(c);
-                if (env) {
-                    info.envelope = env.playbackEnvelope;
-                    info.expiry = env.expiryTime;
-                    foundEnv = env;
-                    break;
-                }
-            } catch (error) {
-                // ignore candidate parse errors and continue
+                }, WAIT_FOR_VALID_MS);
+                PENDING_PLAYBACK.set(key, { timeoutId, error: timedErr });
             }
         }
-// no usable envelope found for this id
-        if (!foundEnv) continue;
-
-        if (info.type === "movie") {
-            parsed.push(["movie", id]);
-        } else if (info.type === "episode") {
-            let show = series[info.show];
-            if (typeof show === "undefined") {
-                series[info.show] = [];
-                show = series[info.show];
-            }
-            show.push([id, info.episode]);
-        }
+    } catch (e) {
+        console.warn("[Amazon Subtitle Downloader] error handling playback response:", e);
     }
-
-    // convert series groups to batch entries (sorted)
-    for (const show of Object.values(series)) {
-        show.sort((a, b) => a[1] - b[1]);
-        const tmp = [];
-        for (const [id, ep] of show) {
-            tmp.push(id);
-        }
-        parsed.push(["batch", tmp]);
-    }
-
-    return parsed;
-};
-
-// const parseActions = actions => {
-//     const parsed = [];
-//     const series = {};
-//     for (const [id, playback] of actions) {
-//         const info = INFO_CACHE.get(id);
-//         if (typeof info === "undefined")
-//             continue;
-//         if (info.type !== "movie" && info.type !== "episode")
-//             continue;
-//         if (typeof info.envelope !== "undefined")
-//             continue;
-
-//         try {
-//             const env = findEnvelope(playback);
-//             if (!env) continue;
-//             info.envelope = env.playbackEnvelope;
-//             info.expiry = env.expiryTime;
-//         } catch (error) {
-//             continue;
-//         }
-
-//         if (info.type === "movie") {
-//             parsed.push(["movie", id]);
-//         }
-//         else if (info.type === "episode") {
-//             let show = series[info.show];
-//             if (typeof show === "undefined") {
-//                 series[info.show] = [];
-//                 show = series[info.show];
-//             }
-//             show.push([id, info.episode]);
-//         }
-//     }
-
-//     for (const show of Object.values(series)) {
-//         show.sort((a, b) => a[1] - b[1]);
-//         const tmp = [];
-//         for (const [id, ep] of show) {
-//             tmp.push(id);
-//         }
-//         parsed.push(["batch", tmp]);
-//     }
-
-//     return parsed;
-// };
-
-const parseDetails = (pageTitleId, state, id, details) => {
-    if (typeof INFO_CACHE.get(id) !== "undefined") {
-        return;
-    }
-
-    const info = {
-        "title": details.title,
-        "type": details.titleType
-    };
-    if (info.type === "movie") {
-        info["year"] = details.releaseYear;
-    } else if (info.type === "episode") {
-        info["episode"] = details.episodeNumber;
-        info["show"] = pageTitleId;
-    } else if (info.type === "season") {
-        info["season"] = details.seasonNumber;
-        info["title"] = details.parentTitle;
-        info["digits"] = 2;
-        if (pageTitleId === id) {
-            try {
-                const epCount = state.episodeList.totalCardSize;
-                info["digits"] = Math.max(Math.floor(Math.log10(epCount)), 1) + 1;
-                if (epCount > state.episodeList.cardTitleIds.length) {
-                    showIncompleteWarning();
-                }
-            } catch (ignore) { }
-        }
-    }
-    else {
-        console.log(id, details);
-        return;
-    }
-
-    INFO_CACHE.set(id, info);
-    console.log('[Amazon Subtitle Downloader] INFO_CACHE keys:', Array.from(INFO_CACHE.keys()), 'size:', INFO_CACHE.size);
-};
-
-function extractProps(fromFetch) {
-    if (!fromFetch || typeof fromFetch !== 'object') return undefined;
-
-    // try common known shapes first (fast)
-    const candidates = [
-        () => fromFetch.page?.[0]?.assembly?.body?.[0]?.props, // original shape
-        () => fromFetch.page?.[0]?.props,
-        () => fromFetch.page?.props,
-        () => fromFetch.props,
-        () => fromFetch.body?.[0]?.props,
-        () => fromFetch.body?.props,
-        () => fromFetch.appArgs?.globalStoreContent, // sometimes wrapped here
-    ];
-
-    for (const get of candidates) {
-        try {
-            const p = get();
-            if (p && (p.btf || p.atf || (p.btf && p.btf.state) )) return p;
-        } catch (e) { /* ignore getters that throw */ }
-    }
-
-    // fallback deep search: look for an object that contains the structure we need.
-    const seen = new WeakSet();
-    function walk(node) {
-        if (!node || typeof node !== 'object' || seen.has(node)) return null;
-        seen.add(node);
-
-        // node is props root (has btf.state.pageTitleId)
-        if (node.btf && node.btf.state && node.btf.state.pageTitleId) return node;
-        // node.props is props root
-        if (node.props && node.props.btf && node.props.btf.state && node.props.btf.state.pageTitleId) return node.props;
-
-        for (const key of Object.keys(node)) {
-            const child = node[key];
-            if (Array.isArray(child)) {
-                for (const it of child) {
-                    const found = walk(it);
-                    if (found) return found;
-                }
-            } else if (child && typeof child === 'object') {
-                const found = walk(child);
-                if (found) return found;
-            }
-        }
-        return null;
-    }
-
-    return walk(fromFetch);
 }
 
-const init = (url, fromFetch) => {
-    let props = undefined;
+// fetch interceptor
+// delegates to handlePlaybackResponse and waits for later valid responses if timedTextUrls.error present
+const startFetchInterceptor = () => {
+    const target = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
+    const originalFetch = target.fetch;
 
-    if (typeof fromFetch === "undefined") {
-        if (INFO_URL === null && url) INFO_URL = url;
+    target.fetch = function (...args) {
+        const request = args[0];
+        const url = (typeof request === "string") ? request : (request?.url || "");
 
-        for (const templateElement of document.querySelectorAll('script[type="text/template"]')) {
-            let data;
-            try {
-                data = JSON.parse(templateElement.innerHTML);
-                props = data.props.body[0].props;
-            } catch (ignore) {
-                continue;
-            }
-
-            if (typeof props !== "undefined") {
-                break;
-            }
+        if (!isPlaybackUrl(url)) {
+            return originalFetch.apply(this, args);
         }
-    } else {
-        if (typeof fromFetch.page === "undefined") {
-            props = extractProps(fromFetch);
-        } else {
-            props = fromFetch.page[0].assembly.body[0].props;
-        }
-        INFO_CACHE.clear();
-        hideIncompleteWarning();
-    }
 
-    if (!props) return;
+        const titleId = getTitleIdFromUrl(url);
+        console.log("[Amazon Subtitle Downloader] intercepted playback request for titleId:", titleId);
 
-    const pageTitleId = props.btf.state.pageTitleId;
-    for (const [id, details] of Object.entries(props.btf.state.detail.detail)) {
-        parseDetails(pageTitleId, props.btf.state, id, details);
-    }
+        const resultPromise = originalFetch.apply(this, args);
 
-    const actions = [];
-    for (const [id, action] of Object.entries(props.atf.state.action.atf || {})) {
-        actions.push([id, action]); // push whole action object
-    }
-    for (const [id, action] of Object.entries(props.btf.state.action.btf || {})) {
-        actions.push([id, action]); // push whole action object
-    }
-    const parsedActions = parseActions(actions);
-    console.log(parsedActions);
-    if (parsedActions.length === 0) return;
+        resultPromise.then(response => {
+            // clone and parse, but do not treat an error as final, delegate to handler which waits for a valid response
+            response.clone().json().then(data => {
+                handlePlaybackResponse(data, titleId, url, "fetch");
+            }).catch(() => { /* not JSON or parse failed, ignore */ });
+        }).catch(() => { /* fetch failed, ignore */ });
 
-    ensureMenu();
-    addDownloadButtons(parsedActions);
+        return resultPromise;
+    };
 };
 
-const parseEpisodes = data => {
-    const pageTitleId = data.widgets.pageContext.pageTitleId;
+// XHR interceptor
+// delegates to handlePlaybackResponse and waits for later valid responses if timedTextUrls.error present
+const startXHRInterceptor = () => {
+    const target = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
+    const originalOpen = target.XMLHttpRequest.prototype.open;
+    const originalSend = target.XMLHttpRequest.prototype.send;
 
-    const actions = [];
-    for (const episode of data.widgets.episodeList.episodes) {
-        parseDetails(pageTitleId, {}, episode.titleID, episode.detail);
-        actions.push([episode.titleID, episode.action]); // push full action object
-    }
-    const parsedActions = parseActions(actions);
-    ensureMenu();
-    addDownloadButtons(parsedActions);
-};
+    target.XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        this._asdUrl = url;
+        return originalOpen.call(this, method, url, ...rest);
+    };
 
-const processMessage = e => {
-    const { type, data } = e.detail;
+    target.XMLHttpRequest.prototype.send = function (...args) {
+        if (this._asdUrl && isPlaybackUrl(this._asdUrl)) {
+            const url = this._asdUrl;
+            const titleId = getTitleIdFromUrl(url);
+            console.log("[Amazon Subtitle Downloader] intercepted XHR playback request for titleId:", titleId);
 
-    if (type === "url") {
-        init(data);
-    } else if (type === "episodes") {
-        parseEpisodes(data);
-    } else if (type === "page") {
-        init(null, data);
-    }
-};
-
-const isPlaybackUrl = (u) => typeof u === "string" && /playbackresources/i.test(u);
-const isEpisodesUrl = (u) => typeof u === "string" && /getdetailwidgets/i.test(u);
-
-// Passive resource observer (no fetch/XHR overrides)
-const startResourceObserver = () => {
-    try {
-        const observed = new Set();
-        const handler = (list) => {
-            list.getEntries().forEach(entry => {
-                const url = entry.name;
-                if (observed.has(url)) return;
-                observed.add(url);
-
-                if (isPlaybackUrl(url) && !INFO_URL) {
-                    INFO_URL = url;
-                    window.dispatchEvent(new CustomEvent("amazon_sub_downloader_data", { detail: { type: "url", data: url } }));
-                } else if (isEpisodesUrl(url)) {
-                    fetch(url).then(r => r.clone().json().then(data => {
-                        window.dispatchEvent(new CustomEvent("amazon_sub_downloader_data", { detail: { type: "episodes", data } }));
-                    }).catch(() => { /* ignore */ })
-                                   ).catch(() => { /* ignore */ });
+            this.addEventListener("load", function () {
+                try {
+                    const text = this.responseText;
+                    let data;
+                    try {
+                        data = JSON.parse(text);
+                    } catch (e) {
+                        data = null;
+                    }
+                    if (!data) return;
+                    handlePlaybackResponse(data, titleId, url, "xhr");
+                } catch (e) {
+                    // ignore
                 }
             });
-        };
-        const po = new PerformanceObserver(handler);
-        po.observe({ type: "resource", buffered: true });
-    } catch (e) {
-        console.warn("PerformanceObserver not available", e);
-    }
+        }
+        return originalSend.apply(this, args);
+    };
 };
 
-// passive template scanner (for initial props)
-const scanTemplates = () => {
-    for (const templateElement of document.querySelectorAll('script[type="text/template"]')) {
-        let data;
-        try {
-            data = JSON.parse(templateElement.innerHTML);
-            const props = data.props?.body?.[0]?.props;
-            if (props) {
-                window.dispatchEvent(new CustomEvent("amazon_sub_downloader_data", { detail: { type: "page", data: data } }));
-                break;
-            }
-        } catch (ignore) { }
-    }
+// re-create menu on SPA navigation
+const startNavigationObserver = () => {
+    let lastUrl = location.href;
+    const check = () => {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            console.log("[Amazon Subtitle Downloader] URL changed, refreshing menu");
+            const existing = document.querySelector(`#${DOWNLOADER_MENU}`);
+            if (existing) existing.remove();
+            ensureMenu();
+        }
+    };
+    window.addEventListener("popstate", check);
+    setInterval(check, 1500);
 };
 
-// observe added script templates (SPA navigations)
-const startTemplateObserver = () => {
-    try {
-        const mo = new MutationObserver(muts => {
-            for (const m of muts) {
-                for (const node of m.addedNodes) {
-                    if (node.tagName === "SCRIPT" && node.type === "text/template") {
-                        scanTemplates();
-                    }
-                }
-            }
-        });
-        mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
-    } catch (e) {
-        console.warn("MutationObserver not available", e);
-    }
-};
-
+// startup
 console.log("[Amazon Subtitle Downloader] script loaded");
 
 const startAsd = () => {
     console.log("[Amazon Subtitle Downloader] starting initialization");
 
-    // ensure menu present (will create if missing)
+    // intercept fetch/XHR before Amazon's player makes requests
+    startFetchInterceptor();
+    startXHRInterceptor();
+
+    // start SPA navigation observer
+    startNavigationObserver();
+
+    // create the menu
     ensureMenu();
 
-    // wire message event
-    window.addEventListener("amazon_sub_downloader_data", processMessage, false);
-
-    // start passive observers
-    startResourceObserver();
-    startTemplateObserver();
-    scanTemplates(); // initial pass
-
-    // add CSS style (remove previous copy if present)
+    // add CSS
     document.querySelectorAll('style[data-asd-style]').forEach(el => el.remove());
     const s = document.createElement("style");
     s.setAttribute("data-asd-style", "1");
@@ -1004,9 +726,7 @@ const startAsd = () => {
     console.log("[Amazon Subtitle Downloader] initialization finished");
 };
 
-// if DOM isn't ready yet, wait for it so document.body is available for ensureMenu and ProgressBar
 if (document.readyState === "loading") {
-    console.log("[Amazon Subtitle Downloader] waiting for DOM to load");
     document.addEventListener("DOMContentLoaded", startAsd, { once: true });
 } else {
     startAsd();
