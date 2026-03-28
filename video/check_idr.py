@@ -4,7 +4,9 @@ pip install rich av
 ffmpeg https://www.ffmpeg.org/download.html
 Ensure ffmpeg is in PATH.
 
-@version 2.2
+@version 2.3
+
+Video codecs supported: H.264, MPEG-2, VC-1
 """
 import argparse
 import re
@@ -110,14 +112,14 @@ def find_idr_frames(video_file, target_frame, verbose: bool):
         console.print(f"[yellow]Frame {target_frame} is NOT an IDR frame[/]")
 
     if idr_before is not None:
-        console.print(f"Nearest IDR frame before: [green]{idr_before}[/]")
+        console.print(f"Nearest IDR frame before target: [green]{idr_before}[/]")
     else:
-        console.print("No IDR frame found before the target frame.")
+        console.print("No IDR frame found before the target frame")
     
     if idr_after is not None:
-        console.print(f"Nearest IDR frame after: [green]{idr_after}[/]")
+        console.print(f"Nearest IDR frame after target: [green]{idr_after}[/]")
     else:
-        console.print("No IDR frame found after the target frame.")
+        console.print("No IDR frame found after the target frame")
         
     if verbose:
         console.print(f"All IDR frames found: [green]{sorted(idr_frames)}[/]")
@@ -247,55 +249,208 @@ def find_safe_frames_mpeg2(video_file, target_frame, verbose: bool):
     # report target frame status
     if target_is_safe:
         console.print(f"[green]Frame {target_frame} is a closed GOP I-frame[/]")
-    elif target_frame in all_i_frames:
-        console.print(f"[yellow]Frame {target_frame} is an I-frame but is open GOP I-frame[/]")
     else:
-        console.print(f"[yellow]Frame {target_frame} is not an I-frame[/]")
+        console.print(f"[yellow]Frame {target_frame} is not a closed GOP I-frame[/]")
  
     # nearest safe cut points
     if safe_before is not None:
-        console.print(f"Nearest closed GOP I-frame before: [green]{safe_before}[/]")
+        console.print(f"Nearest closed GOP I-frame before target: [green]{safe_before}[/]")
     else:
         console.print("[yellow]No closed GOP I-frame found before the target frame[/]")
  
     if safe_after is not None:
-        console.print(f"Nearest closed GOP I-frame after: [green]{safe_after}[/]")
+        console.print(f"Nearest closed GOP I-frame after target: [green]{safe_after}[/]")
     else:
-        console.print("[yellow]No closed GOP I-frame found after the target frame.[/]")
+        console.print("[yellow]No closed GOP I-frame found after the target frame[/]")
  
     if verbose:
         console.print(f"All closed GOP I-frames: [green]{sorted(safe_cut_frames)}[/]")
 
 
+def find_safe_frames_vc1(video_file, target_frame, verbose: bool):
+    """
+    Finds closed entry-point I-frames in a VC-1 Advanced Profile elementary stream by
+    parsing the raw bitstream.
+ 
+    ffmpeg trace_headers does not support VC-1, so instead we scan the file for
+    4-byte start codes (0x00 0x00 0x01 + suffix) manually:
+        0x0D = Frame
+        0x0E = Entry Point Header
+        0x0F = Sequence Header
+    (SMPTE 421M Annex E; confirmed by GStreamer VC-1 parser)
+ 
+    In VC-1 AP, an Entry Point Header always immediately precedes the I-frame
+    it introduces. A safe cut point is any frame immediately following an
+    Entry Point Header where CLOSED_ENTRY = 1, meaning the segment is
+    self-contained and does not reference any frames from the previous segment.
+ 
+    Entry point header bit layout (SMPTE 421M §6.2, bits packed MSB-first):
+        bit 7 of byte[0] after start code: BROKEN_LINK
+        bit 6 of byte[0] after start code: CLOSED_ENTRY
+ 
+    NOTE: Frame numbers reported here are in decode order, which may differ
+    from display order if the stream contains B-frames. Unlike MPEG-2, VC-1
+    does not carry a temporal_reference field that is easily extractable
+    without fully parsing the complex AP frame header syntax.
+    The parsing below was derived from the SMPTE Standard VC-1 proposal document
+    found here https://multimedia.cx/mirror/s421m.pdf
+    """
+    start_time = time.time()
+ 
+    # VC-1 AP start code suffixes
+    SC_FRAME       = 0x0D
+    SC_ENTRYPOINT  = 0x0E
+ 
+    safe_cut_frames = set()   # closed entry-point I-frames
+    all_i_frames = set()      # every I-frame (i.e. every frame following any entry point)
+    current_frame = -1
+    pending_closed_entry = False   # CLOSED_ENTRY from the most recent entry point header
+    pending_any_entry = False      # any entry point seen (closed or open), for all_i_frames
+    safe_before = None
+    safe_after = None
+    target_is_safe = False
+    done = False
+ 
+    status_ctx = console.status("Starting scan...", spinner="dots") if verbose else contextlib.nullcontext()
+ 
+    # read in chunks with a 4-byte tail carried over between chunks so that
+    # start codes surrounding a chunk boundary are never missed
+    CHUNK_SIZE = 65536
+ 
+    try:
+        with open(video_file, 'rb') as f, status_ctx as status:
+            tail = b''
+            while not done:
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+ 
+                data = tail + chunk
+                i = 0
+ 
+                while i <= len(data) - 4:
+                    # skip bytes that can't start a start code
+                    if data[i] != 0x00:
+                        i += 1
+                        continue
+                    if data[i+1] != 0x00:
+                        i += 2
+                        continue
+                    if data[i+2] != 0x01:
+                        i += 1
+                        continue
+ 
+                    scs = data[i+3]
+ 
+                    if scs == SC_ENTRYPOINT:
+                        # The byte immediately after the start code holds
+                        # BROKEN_LINK (bit 7) and CLOSED_ENTRY (bit 6).
+                        # This byte can never be an emulation prevention byte
+                        # (0x03) because it follows directly after 0x01.
+                        if i + 4 < len(data):
+                            header_byte = data[i+4]
+                            pending_closed_entry = bool(header_byte & 0x40)  # bit 6
+                            pending_any_entry = True
+                        i += 4
+ 
+                    elif scs == SC_FRAME:
+                        current_frame += 1
+ 
+                        if verbose and status is not None:
+                            status.update(f"Scanning frame {current_frame}")
+ 
+                        # every frame that follows any entry point is an I-frame
+                        if pending_any_entry:
+                            all_i_frames.add(current_frame)
+ 
+                        if pending_closed_entry:
+                            if current_frame == target_frame:
+                                target_is_safe = True
+                                safe_cut_frames.add(current_frame)
+                                done = True
+                                break
+                            elif current_frame < target_frame:
+                                safe_before = current_frame
+                                safe_cut_frames.add(current_frame)
+                            elif current_frame > target_frame and safe_after is None:
+                                safe_after = current_frame
+                                safe_cut_frames.add(current_frame)
+ 
+                        # consume the entry point flags regardless of type
+                        pending_closed_entry = False
+                        pending_any_entry = False
+ 
+                        if safe_after is not None:
+                            done = True
+                            break
+ 
+                        i += 4
+ 
+                    else:
+                        i += 4
+ 
+                # carry the last 3 bytes into the next iteration so start codes
+                # at chunk boundaries are not missed
+                tail = data[-3:]
+ 
+    except FileNotFoundError:
+        console.print(f"[red]{video_file} not found[/]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error reading {video_file}:[/] {e}")
+        sys.exit(1)
+ 
+    end_time = time.time()
+    console.print(f"\nExecution time: [blue]{end_time - start_time:.3f}[/] seconds")
+ 
+    if target_is_safe:
+        console.print(f"[green]Frame {target_frame} is a CEP I-frame[/]")
+    else:
+        console.print(f"[yellow]Frame {target_frame} is not a CEP I-frame[/]")
+ 
+    if safe_before is not None:
+        console.print(f"Nearest CEP I-frame before target: [green]{safe_before}[/]")
+    else:
+        console.print("[yellow]No CEP I-frames found before the target frame[/]")
+ 
+    if safe_after is not None:
+        console.print(f"Nearest CEP I-frame after target: [green]{safe_after}[/]")
+    else:
+        console.print("[yellow]No CEP I-frames found after the target frame[/]")
+ 
+    if verbose:
+        console.print(f"All CEP I-frames: [green]{sorted(safe_cut_frames)}[/]")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Check if a frame is an IDR frame in an H.264 stream or a closed GOP I-frame in an MPEG-2 stream.',
+        description='Check if a frame is an IDR frame in an H.264 stream, a closed GOP I-frame in an MPEG-2 stream, or a closed entry-point I-frame in a VC-1 stream.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
             Usage:
             check_idr.py video.h264 --frame 1000
             check_idr.py video.m2v -f 1000 --verbose
+            check_idr.py video.vc1 -f 1000 -v
         '''
     )
-    parser.add_argument('video_file', help='Path to the H.264 video file')
+    parser.add_argument('video_file', help='Path to the raw stream video file')
     parser.add_argument('-f', '--frame', type=int, required=True,
                         help='Frame number to check')
     parser.add_argument('-v', '--verbose', action='store_true',
-                        help='console.prints a list of all IDR frames from 0 -> --frame')
+                        help='console.prints a list of all IDR/closed GOP/closed entry-point frames from 0 -> --frame')
     
     args = parser.parse_args()
     
     video_file = Path(args.video_file)
     av_file = av.open(Path(video_file))
     stream_type = av_file.format.name
-    if stream_type == "h264":
-        console.print(f"[green]{video_file.name} detected as raw h264[/]")
-    elif stream_type == "mpegvideo":
-        console.print(f"[green]{video_file.name} detected as raw mpeg[/]")
-    else:
-        console.print(f"[yellow]Video file must be a raw h264 or mpeg-2 stream.[/yellow]")
+    stream = av_file.streams[0]
+    profile = stream.codec_context.profile
+    if stream_type not in ("h264", "mpegvideo", "vc1"):
+        console.print(f"[yellow]Video file must be a raw h264, mpeg, or vc1 stream.[/yellow]")
         console.print(f"[yellow]Detected file format:[/yellow] {stream_type}")
         return
+    console.print(f"[green]{video_file.name} detected as:[/] {stream_type} {profile}")
         
     try:
         frame = int(args.frame)
@@ -311,6 +466,14 @@ def main():
         find_idr_frames(str(video_file), frame, verbose)
     elif stream_type == "mpegvideo":
         find_safe_frames_mpeg2(str(video_file), frame, verbose)
+    elif stream_type == "vc1":
+        
+        if profile != "Advanced":
+            console.print(f"{profile} [yellow]format profile VC-1 streams are not supported[/]")
+            return
+        console.print("Note that frame numbers outputted for VC-1 streams are in [i]decoded[/i] order, " +
+                      "which may not match the [i]display[/i] order.")
+        find_safe_frames_vc1(str(video_file), frame, verbose)
 
 if __name__ == "__main__":
     main()
