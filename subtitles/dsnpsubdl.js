@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name           Disney+ Subtitle Downloader (fix)
+// @name           Disney+ Subtitle Downloader
 // @description    Download subtitles from Disney+
-// @version        1.2
+// @version        1.5
 // @author         squasher
 // @license        MIT; https://opensource.org/licenses/MIT
 // @match          https://www.disneyplus.com/*
@@ -13,31 +13,32 @@
 
 (function(open, send) {
     'use strict';
-    var debug = (location.hash == "#debug");
-    debuglog("Disney+ Subtitle Downloader");
+    const DEBUG = false;
+    const log = (msg) => { console.log(`[DSNP Subtitle Downloader] ${msg}`); }
+    const debug = (msg) => { if (DEBUG) console.log(`[DSNP DEBUG] ${msg}`); }
 
     function init() {
-        debuglog("Document state: " + document.readyState);
+        debug("Init document state: " + document.readyState);
         if (document.readyState == "complete" || document.readyState == "loaded") {
             start();
-            debuglog("Already loaded");
+            debug("Document already loaded");
         } else {
             if (window.addEventListener) {
                 window.addEventListener("load", start, false);
-                debuglog("Onload method: addEventListener");
+                debug("Onload method: addEventListener");
             } else if (window.attachEvent) {
                 window.attachEvent("onload", start);
-                debuglog("Onload method: attachEvent");
+                debug("Onload method: attachEvent");
             } else {
                 window.onload = start;
-                debuglog("Onload method: onload");
+                debug("Onload method: onload");
             }
         }
         document.listen = true;
     }
 
     function start() {
-        debuglog("start");
+        debug("start");
         if (typeof document.initaudio !== "undefined") document.initaudio();
         if (typeof document.initsub !== "undefined") document.initsub();
         listensend();
@@ -46,7 +47,7 @@
             window._dsnpFetchPatched = true;
             const origFetch = window.fetch.bind(window);
             window.fetch = function(resource, init) {
-                // Resolve resource to string URL
+                // resolve resource to string URL
                 let url;
                 try { url = (typeof resource === 'string') ? resource : resource.url; } catch(e) { url = '';}
                 return origFetch(resource, init).then(function(response) {
@@ -57,11 +58,11 @@
                                 // clone & read text asynchronously, cache it
                                 response.clone().text().then(function(text) {
                                     window._dsnpCache[norm] = text;
-                                    debuglog("Cached fetch response for: " + norm);
-                                }).catch(function(err){ debuglog("fetch clone text err: " + err); });
+                                    debug("Cached fetch response for: " + norm);
+                                }).catch(function(err){ debug("fetch clone text err: " + err); });
                             }
                         }
-                    } catch (ex) { debuglog("fetch patch error: " + ex); }
+                    } catch (ex) { debug("fetch patch error: " + ex); }
                     return response;
                 });
             };
@@ -71,7 +72,7 @@
     if (!document.listen) init();
 
     document.initsub = function() {
-        debuglog("initsub");
+        debug("initsub");
         if (typeof window._dsnpCache === 'undefined') window._dsnpCache = {};
         document.disneyAuthToken = "";
         document.langs = [];
@@ -102,13 +103,13 @@
 
     // catch M3U8 files
     function listensend() {
-        debuglog("listensend");
+        debug("listensend");
         var newOpen = function(...args) {
             this._dsnpUrl = (args.length >= 2) ? args[1] : "";
             if (!document.m3u8found && args.length >= 2) {
                 if (args[1].indexOf(".m3u8") > 0 && document.url != args[1]) {
                     // m3u8 url
-                    debuglog("m3u8 found : " + args[1]);
+                    debug("m3u8 found: " + args[1]);
                     document.url = args[1];
                     document.langs = [];
                     document.baseurl = document.url.substring(0, document.url.lastIndexOf('/') + 1);
@@ -117,15 +118,20 @@
                 }
             }
             // hook setRequestHeader on this instance
+            // captures disney auth token for metadata api request
             var origSetReqHeader = this.setRequestHeader.bind(this);
             this.setRequestHeader = function(header, value) {
                 if (header.toLowerCase() === 'authorization'
+                    && value != null
                     && value.indexOf('Bearer ') === 0
                     && args.length >= 2
                     && args[1].indexOf('disney.api.edge.bamgrid.com') > -1
                     && document.disneyAuthToken !== value) {
                     document.disneyAuthToken = value;
-                    console.log("Disney auth token captured (length: " + value.length + ")");
+                    if (document.disneyAuthToken.length > 500) {
+                        log(`Disney auth token captured: ${value.slice(0, 50)}`);
+                        fetchMetadataFromAPI();
+                    }
                 }
                 origSetReqHeader(header, value);
             };
@@ -134,7 +140,6 @@
 
         var newSend = function(...args) {
             var xhrUrl = this._dsnpUrl || "";
-
             // capture auth token from Disney API requests
             if (xhrUrl.indexOf("disney.api.edge.bamgrid.com") > -1) {
                 var headerValue = this.getRequestHeader && this.getRequestHeader("authorization");
@@ -149,29 +154,9 @@
                     } catch(e) {}
                 }, false);
             }
-            // intercept browse page API responses to grab release year/content title
+            // check for SPA navigation changes to fetch metadata as a fallback
             this.addEventListener('readystatechange', function(e) {
-                if (e.target.readyState === 4 && e.target.status === 200) {
-                    try {
-                        var text = e.target.responseText;
-                        if (text && text.indexOf('releaseYearRange') > -1) {
-                            window.__last_release_api_response = text;
-                            var resp = JSON.parse(text);
-                            var contentTitle = resp?.data?.page?.visuals?.title;
-                            var year = resp?.data?.page?.visuals?.metastringParts?.releaseYearRange?.startYear;
-                            if (year) {
-                                document.releaseyear = year;
-                                console.log("Release year from API: " + year);
-                            }
-                            if (contentTitle) {
-                                contentTitle = contentTitle.replaceAll(" Of ", " of ");
-                                contentTitle = contentTitle.replaceAll(" The ", " the ");
-                                document.filename = contentTitle;
-                                console.log("Content title from API: " + contentTitle);
-                            }
-                        }
-                    } catch(ex) {}
-                }
+                parseMetadata(e);
             }, false);
             send.call(this,...args);
 
@@ -179,62 +164,86 @@
                 try {
                     var url = this._dsnpUrl || "";
                     if (!url) return;
-                    // Normalize: remove fragment
+                    // normalize to remove fragment
                     var norm = url.split('#')[0];
                     if (norm.match(/\.m3u8(\?.*)?$/i) || norm.match(/\.vtt(\?.*)?$/i)) {
-                        // Only cache successful responses
+                        // only cache successful responses
                         if (this.status === 200 && typeof this.responseText === 'string') {
                             window._dsnpCache[norm] = this.responseText;
-                            // For debugging:
-                            debuglog("Cached response for: " + norm);
+                            debug("Cached response for: " + norm);
                         }
                     }
-                } catch (ex) { debuglog("cache save failed: " + ex); }
+                } catch (ex) { debug("Cache save failed: " + ex); }
             }, false);
         }
 
         if (typeof unsafeWindow !== "undefined") {
-            debuglog("Window state : unsafe");
+            debug("Window state: unsafe");
             var define = Object.defineProperty;
             define(unsafeWindow.XMLHttpRequest.prototype, "open", {value: exportFunction(newOpen, window)});
             define(unsafeWindow.XMLHttpRequest.prototype, "send", {value: exportFunction(newSend, window)});
         } else {
-            debuglog("Window state : safe");
+            debug("Window state: safe");
             XMLHttpRequest.prototype.open = newOpen;
             XMLHttpRequest.prototype.send = newSend;
         }
     }
 
-    function fetchAPIDetails() {
-        if ((document.releaseyear && document.filename)) return;
+    // parse the title/year metadata from SPA navigation events
+    function parseMetadata(e) {
+        if (e.target.readyState === 4 && e.target.status === 200) {
+            try {
+                var text = e.target.responseText;
+                if (text && text.indexOf('releaseYearRange') > -1) {
+                    window.__last_release_api_response = text;
+                    var resp = JSON.parse(text);
+                    var contentTitle = resp?.data?.page?.visuals?.title;
+                    var year = resp?.data?.page?.visuals?.metastringParts?.releaseYearRange?.startYear;
+                    if (contentTitle) {
+                        contentTitle = contentTitle.replaceAll(" Of ", " of ");
+                        contentTitle = contentTitle.replaceAll(" The ", " the ");
+                        document.filename = contentTitle;
+                        log("Parsed content title from SPA nav: " + contentTitle);
+                    }
+                    if (year) {
+                        document.releaseyear = year;
+                        log("Parsed release year from SPA nav: " + year);
+                    }
+                }
+            } catch(ex) { debug("Metadata parsing failed: " + ex) }
+        }
+    }
+
+    // fetch the content metadata from the disney api if we have a valid token
+    function fetchMetadataFromAPI() {
+        if (document.releaseyear && document.filename) return;
 
         // extract entity ID from /play/UUID
-        var match = window.location.pathname.match(/\/(play|browse)\/([a-f0-9-]+)/i);
-        //if (!match) {
-        //    document.fetchingyear = false;
-        //    return;
-        //}
-
-        if (!document.disneyAuthToken) {
-            console.log("No auth token yet, will retry");
-            document.fetchingyear = false;
+        var match = window.location.pathname.match(/\/(?:play|browse)\/(?:entity-)?([a-f0-9-]+)/i);
+        if (!match) {
+            debug("Could not find match in window location: " + window.location.pathname);
             return;
         }
 
-        // the real Disney auth token is ~4000+ chars.
-        // short tokens (< 500 chars) are pre-flight tokens and should be filtered.
-        if (document.disneyAuthToken.length < 500) {
-            debuglog("Waiting for full auth token (current length: "
-                     + (document.disneyAuthToken ? document.disneyAuthToken.length : 0) + ")");
-            return; // buttonhandle will retry on next interval
+        if (!document.disneyAuthToken) {
+            debug("fetchMetadataFromAPI() called with no auth token, skipping request attempt");
+            return;
         }
-        document.fetchingyear = true;
+
+        // the real Disney auth token is ~4000+ chars
+        // short tokens (< 500 chars) are pre-flight tokens and should be filtered
+        if (document.disneyAuthToken.length < 500) {
+            debug("Waiting for full auth token (current length: "
+                     + (document.disneyAuthToken ? document.disneyAuthToken.length : 0) + ")");
+            return;
+        }
 
         var entityId = match[1];
         var url = "https://disney.api.edge.bamgrid.com/explore/v1.13/page/entity-" + entityId + "?disableSmartFocus=true&enhancedContainersLimit=15&limit=15";
 
-        console.log("Fetching release year from API: " + url);
+        console.log("Fetching content details from API: " + url);
 
+        // set http request headers
         var http = new XMLHttpRequest();
         http.open("GET", url, true);
         http.setRequestHeader("accept", "application/json");
@@ -243,6 +252,7 @@
         http.setRequestHeader("x-bamsdk-platform", "javascript/windows/chrome");
         http.setRequestHeader("x-dss-edge-accept", "vnd.dss.edge+json; version=2");
 
+        // parse json response
         http.onloadend = function() {
             if (http.readyState == 4 && http.status == 200) {
                 try {
@@ -250,15 +260,15 @@
                     console.log(resp);
                     var contentTitle = resp?.data?.page?.visuals?.title;
                     var year = resp?.data?.page?.visuals?.metastringParts?.releaseYearRange?.startYear;
-                    if (year) {
-                        document.releaseyear = year;
-                        //console.log("Release year from API: " + year);
-                    }
                     if (contentTitle) {
                         contentTitle = contentTitle.replaceAll(" Of ", " of ");
                         contentTitle = contentTitle.replaceAll(" The ", " the ");
                         document.filename = contentTitle;
-                        //console.log("Content title from API: " + contentTitle);
+                        log("Parsed content title from API: " + contentTitle);
+                    }
+                    if (year) {
+                        document.releaseyear = year;
+                        log("Parsed release year from API: " + year);
                     }
                 } catch(e) {
                     console.log("Failed to parse API response: " + e);
@@ -271,7 +281,7 @@
     }
 
     function m3u8loaded(response) {
-        debuglog("m3u8loaded");
+        debug("m3u8loaded");
         if (typeof document.m3u8sub !== "undefined") document.m3u8sub(response);
         if (typeof document.m3u8audio !== "undefined") document.m3u8audio(response);
     }
@@ -288,33 +298,34 @@
                 var lang = linetoarray(line);
                 lang.LOCALIZED = document.globalization.timedText.find(t => t.language == lang.LANGUAGE);
                 document.langs.push(lang);
-                debuglog("Sub found : "+lang.NAME);
+                debug("Sub found : "+lang.NAME);
             });
         } else if (response.indexOf('.vtt') > 0) {
-            debuglog("vtt found");
+            debug("vtt found");
             var lines = response.match(regexpvtt);
             if (!lines) lines = response.match(regexpvtt2);
             if (lines) {
                 lines.forEach(function(line) {
                     var lineTrim = line.trim();
 
-                    // Build full URL for vtt. Use the line as-is if it's absolute otherwise resolve relative to the playlist's URI.
+                    // build full URL for vtt
+                    // use the line as-is if it's absolute otherwise resolve relative to the playlist's URI
                     var vttUrl = "";
                     try {
                         if (/^https?:\/\//i.test(lineTrim)) {
                             vttUrl = lineTrim;
                         } else {
-                            // Determine base folder for language URIs (preserve any querystring/tokens that were part of the m3u8 language URI)
+                            // determine base folder for language URIs (preserve any querystring/tokens that were part of the m3u8 language URI)
                             var uri = document.langs[document.langid].URI || "";
                             var uriBase = document.baseurl;
                             if (uri.indexOf('/') > -1) {
                                 uriBase = document.baseurl + uri.substring(0, uri.lastIndexOf('/') + 1);
                             }
-                            // Use URL() to resolve relative paths properly and keep query strings
+                            // use URL() to resolve relative paths properly and keep query strings
                             vttUrl = new URL(lineTrim, uriBase).toString();
                         }
                     } catch (ex) {
-                        debuglog("Failed to resolve VTT URL, fallback to naive concatenation");
+                        debug("Failed to resolve VTT URL, fallback to naive concatenation");
                         var url = document.baseurl;
                         var uri = document.langs[document.langid].URI;
                         url += uri.substring(0, 2);
@@ -338,7 +349,7 @@
     }
 
     function vttloaded(response) {
-        debuglog("vttloaded");
+        debug("vttloaded");
         // save segment
         document.segments += response.substring(response.indexOf("-->") - 13);
         document.segid++;
@@ -370,7 +381,6 @@
     }
 
     function buttonhandle() {
-        if (!document.releaseyear && window.location.pathname.indexOf("/play/") > -1) { /*fetchAPIDetails();*/ }
         var buttons = document.getElementsByClassName("control-icon-btn");
         if (buttons.length > 0) {
             if (typeof document.clickhandlesub !== "undefined") document.clickhandlesub();
@@ -387,7 +397,7 @@
             //if (document.getElementsByClassName("subtitle-field").length > 0) document.episode = document.getElementsByClassName("subtitle-field")[0]?.innerText
         }
 
-        if (document.oldlocation != window.location.href && document.oldlocation!=null) {
+        if (document.oldlocation != window.location.href && document.oldlocation != null) {
             // location changed
             document.m3u8found = false;
             document.langs = [];
@@ -408,14 +418,14 @@
     }
 
     function selectsub(e) {
-        debuglog("selectsub");
+        debug("selectsub");
         var width = this.offsetWidth;
         // check click position
         if (e.layerX >= width - 30 && e.layerX <= width - 10 && e.layerY >= 5 && e.layerY <= 25) {
             var lang = this.childNodes[0].childNodes[1].innerHTML;
             if (lang == "Off") {
                 // download all subs
-                debuglog("Download all subs");
+                debug("Download all subs");
                 document.zip = new JSZip();
                 document.downloadall = true;
                 document.downloadid = -1;
@@ -435,13 +445,13 @@
 
         if (document.downloadid < document.langs.length) {
             document.styleSheets[0].addRule('#subtitleTrackPicker > div:first-child:before','padding-right:35px;content:"' + Math.round((document.downloadid / document.langs.length) * 100) + '%";');
-            download(document.langs[document.downloadid].NAME,false,false);
+            download(document.langs[document.downloadid].NAME, false, false);
         } else {
-            debuglog("Subs downloaded");
+            debug("Subs downloaded");
             clearInterval(document.downloadinterval);
             document.styleSheets[0].addRule('#subtitleTrackPicker > div:first-child:before','padding-right:25px;content:"All";');
 
-            debuglog("Save zip");
+            debug("Save zip");
             document.zip.generateAsync({type:"blob"}).then(function(content) {
                 var output = document.filename;
                 if (document.releaseyear) output += "." + document.releaseyear;
@@ -454,7 +464,7 @@
 
     function download(langname, withForced = true, localized = true) {
         if (!document.wait) {
-            debuglog("Download sub : " + langname);
+            debug("Download sub : " + langname);
             var language;
             var count = 0;
             document.forced = false;
@@ -476,7 +486,7 @@
                         document.waitsub = true;
                         document.waitInterval = setInterval(function () {
                             if (!document.wait) {
-                                debuglog("Download forced : " + langname);
+                                debug("Download forced : " + langname);
                                 clearInterval(document.waitInterval);
                                 document.langid = subid;
                                 getpagecontent(m3u8loaded,document.baseurl + lang.URI);
@@ -493,7 +503,7 @@
     }
 
     function getSegments() {
-        debuglog("Downloading all " + document.vttlist.length + " segments in parallel");
+        debug("Downloading all " + document.vttlist.length + " segments in parallel");
 
         var total = document.vttlist.length;
         var segments = new Array(total);
@@ -501,18 +511,18 @@
 
         document.vttlist.forEach(function(url, index) {
             getpagecontent(function(response) {
-                debuglog("Segment " + index + "/" + (total - 1) + " downloaded");
+                debug("Segment " + index + "/" + (total - 1) + " downloaded");
                 segments[index] = response.substring(response.indexOf("-->") - 13);
                 completed++;
 
                 if (completed === total) {
-                    debuglog("All segments downloaded");
+                    debug("All segments downloaded");
                     var merged = segments.join('');
                     if (merged.length > 0) {
                         merged = merged.replace(/WEBVTT\s*STYLE\s*::cue\(\)\s*\{[\s\S]*?\}\s*/g, '');
                         exportfile(merged);
                     } else {
-                        alert("Unknown error, please report a bug for this video.");
+                        alert("Unknown error, please report this on github for this video");
                     }
                     document.segments = "";
                     document.vttlist = [];
@@ -529,14 +539,15 @@
         let out = s.replace(/[:\\?\/\*"<>\|,]/g, '');
         // replace white space with '.' characters
         out = out.replace(/[ _]+/g, '.');
-        // ollapse multiple '.' characters into one
+        // collapse multiple '.' characters into one
         out = out.replace(/\.{2,}/g, '.');
         out = out.replace(".-.", ".");
+        out = out.replace(",.", ".");
         return out;
     }
 
     function exportfile(text) {
-        debuglog("exportfile");
+        debug("exportfile");
         var output = document.filename;
         if (document.releaseyear) output += "." + document.releaseyear;
         if (document.episode != "") output += "." + document.episode.replace(':','');
@@ -557,14 +568,14 @@
         output = sanitizeString(output);
 
         if (document.downloadall) {
-            debuglog("Add to zip");
+            debug("Add to zip");
             document.zip.file(output, text);
             document.downloadinterval = setTimeout(function () {
                 document.wait = false;
                 if (!document.waitsub) downloadnext();
-            }, 20);
+            }, 10);
         } else {
-            debuglog("Save sub");
+            debug("Save sub");
             var hiddenElement = document.createElement('a');
 
             hiddenElement.href = 'data:attachment/text,' + encodeURI(text).replace(/#/g, '%23');
@@ -576,55 +587,67 @@
     }
 
     function getpagecontent(callback, url) {
-        debuglog("getpagecontent requested: " + url);
-        try {
-            // normalize url for lookup (strip fragment only)
-            var norm = url.split('#')[0];
+        debug("getpagecontent requested: " + url);
+        var norm = url.split('#')[0];
 
-            // direct exact-match in-cache (also try without trailing slash variants)
-            if (window._dsnpCache && window._dsnpCache[norm]) {
-                debuglog("Returning cached content for: " + norm);
-                setTimeout(function(){ callback(window._dsnpCache[norm]); }, 0);
-                return;
-            }
-            // Also try matching URLs where query param order differs - best-effort:
-            for (var k in window._dsnpCache) {
-                if (!window._dsnpCache.hasOwnProperty(k)) continue;
-                if (k.indexOf(norm) > -1 || norm.indexOf(k) > -1) {
-                    debuglog("Found near-match cache key: " + k + " for " + norm);
-                    setTimeout(function(){ callback(window._dsnpCache[k]); }, 0);
-                    return;
+        // try cache first, exact match then near-match
+        // returns true and fires callback if found
+        function checkCache() {
+            try {
+                if (window._dsnpCache && window._dsnpCache[norm]) {
+                    debug("Returning cached content for: " + norm);
+                    callback(window._dsnpCache[norm]);
+                    return true;
                 }
-            }
-        } catch (ex) { debuglog("cache lookup failed: " + ex); }
+                for (var k in window._dsnpCache) {
+                    if (!window._dsnpCache.hasOwnProperty(k)) continue;
+                    if (k.indexOf(norm) > -1 || norm.indexOf(k) > -1) {
+                        debug("Found near-match cache key: " + k + " for " + norm);
+                        callback(window._dsnpCache[k]);
+                        return true;
+                    }
+                }
+            } catch (ex) { debug("cache lookup failed: " + ex); }
+            return false;
+        }
 
-        // If nothing cached, fall back to XHR attempt (may be blocked by CORS)
-        debuglog("Downloading : " + url);
+        if (checkCache()) return;
+
+        // not in cache, fetch directly
+        fetchViaXHR(callback, url);
+    }
+
+    function fetchViaXHR(callback, url) {
+        debug("fetchViaXHR: " + url);
         var http = new XMLHttpRequest();
         http.open("GET", url, true);
+        //http.withCredentials = true;
 
-        // include cookies (CDN auth can be cookie-based) — keep if helpful
-        http.withCredentials = true;
-
-        if (document.disneyAuthToken && document.disneyAuthToken.length > 500) {
-            try { http.setRequestHeader("authorization", document.disneyAuthToken); } catch (ex) { debuglog("Failed to set Authorization header: " + ex); }
+        // only attach the Authorization header for Disney API endpoints
+        // sending it to CDN URLs (media.dssott.com etc.) triggers a CORS preflight
+        // that fails on NA/BR regions, the UK and some other CDN's happen to allow it
+        if (document.disneyAuthToken && document.disneyAuthToken.length > 500
+            && url.indexOf('disney.api.edge.bamgrid.com') > -1) {
+            try { http.setRequestHeader("authorization", document.disneyAuthToken); } catch (ex) { debug("Failed to set Authorization header: " + ex); }
         }
 
         http.onloadend = function() {
             if (http.readyState == 4 && http.status == 200) {
-                // cache successful response
                 try { window._dsnpCache[url.split('#')[0]] = http.responseText; } catch(e){}
                 callback(http.responseText);
             } else if (http.status === 404) {
-                debuglog("Not found");
+                debug("Not found (404) for " + url);
                 callback("");
             } else if (http.status === 403) {
-                debuglog("Forbidden (403) for " + url);
-                // fallback: return empty so caller doesn't hang (you can keep your retry logic)
+                debug("Forbidden (403) for " + url);
+                callback("");
+            } else if (http.status === 0) {
+                // status 0 = CORS block or network error — retrying will not help
+                debug("XHR blocked (CORS or network) for " + url);
                 callback("");
             } else {
-                debuglog("Unknown error, retrying");
-                setTimeout(function () { getpagecontent(callback,url); },100);
+                debug("Unknown error (" + http.status + "), retrying: " + url);
+                setTimeout(function () { fetchViaXHR(callback, url); }, 100);
             }
         };
         http.send();
@@ -636,9 +659,5 @@
             str = padString + str;
         }
         return str;
-    }
-
-    function debuglog(message) {
-        if (debug) console.log("%c [debug] " + message, 'background: #222; color: #bada55');
     }
 })(XMLHttpRequest.prototype.open, XMLHttpRequest.prototype.send);
